@@ -1,0 +1,83 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Light theme — white-label inspired: clean white surface, deep teal accent,
+       soft cool grays. Single accent color, minimal saturation elsewhere. */
+    --background: 0 0% 100%;
+    --foreground: 222 14% 12%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 14% 12%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 14% 12%;
+
+    /* Deep teal — the bold accent in the white-label kit */
+    --primary: 195 70% 28%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 222 14% 12%;
+
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 46%;
+
+    --accent: 195 70% 96%;
+    --accent-foreground: 195 70% 22%;
+
+    --destructive: 0 70% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 195 70% 28%;
+
+    --radius: 0.625rem;
+
+  }
+
+  .dark {
+    --background: 222 16% 8%;
+    --foreground: 220 14% 96%;
+    --card: 222 16% 10%;
+    --card-foreground: 220 14% 96%;
+    --popover: 222 16% 10%;
+    --popover-foreground: 220 14% 96%;
+    --primary: 195 70% 60%;
+    --primary-foreground: 222 16% 8%;
+    --secondary: 222 12% 18%;
+    --secondary-foreground: 220 14% 96%;
+    --muted: 222 12% 18%;
+    --muted-foreground: 220 10% 65%;
+    --accent: 222 12% 18%;
+    --accent-foreground: 220 14% 96%;
+    --destructive: 0 65% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 222 12% 22%;
+    --input: 222 12% 22%;
+    --ring: 195 70% 60%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  /* Pin the document to the viewport so child layouts using h-screen / h-full
+     actually constrain their height. Without this, html and body collapse to
+     content height and any inner h-screen container can still produce
+     document-level scroll. */
+  html,
+  body {
+    @apply h-full;
+  }
+  body {
+    @apply bg-background text-foreground overflow-hidden;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
