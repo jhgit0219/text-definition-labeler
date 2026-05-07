@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { db, schema } from "@/lib/db";
 import { eq, asc } from "drizzle-orm";
 
+// Force fresh DB read on every request — entry edits/state changes/imports
+// must show up immediately, not be cached by Vercel's build-time render.
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 /**
  * GET /api/entries?page=23
  * Returns all entries on a page in entry-index order.
@@ -18,5 +23,8 @@ export async function GET(req: NextRequest) {
     .from(schema.entries)
     .where(eq(schema.entries.page, page))
     .orderBy(asc(schema.entries.entryIdx));
-  return NextResponse.json({ entries: rows });
+  return NextResponse.json(
+    { entries: rows },
+    { headers: { "Cache-Control": "no-store, max-age=0, must-revalidate" } },
+  );
 }

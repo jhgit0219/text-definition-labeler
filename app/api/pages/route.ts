@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { db, schema } from "@/lib/db";
 import { sql } from "drizzle-orm";
 
+// Force fresh DB read on every request — page list reflects current state
+// (deletes/imports/etc.) without going through Vercel's build-time cache.
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 /**
  * GET /api/pages
  * Returns the distinct page numbers that have at least one entry, plus
@@ -20,5 +25,8 @@ export async function GET() {
     .from(schema.entries)
     .groupBy(schema.entries.page)
     .orderBy(schema.entries.page);
-  return NextResponse.json({ pages: rows });
+  return NextResponse.json(
+    { pages: rows },
+    { headers: { "Cache-Control": "no-store, max-age=0, must-revalidate" } },
+  );
 }
