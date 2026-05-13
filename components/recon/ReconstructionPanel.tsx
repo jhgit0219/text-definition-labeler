@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
+  ArrowLeft,
   BookOpen,
   ChevronDown,
   ChevronRight,
@@ -57,7 +58,16 @@ type PanelState =
   | { kind: "miss"; entry: Entry; spreadsheet: SpreadsheetProtosDto | null }
   | { kind: "queued"; entry: Entry }
   | { kind: "done"; entry: Entry; data: ReconResponseDto }
-  | { kind: "error"; entry: Entry; message: string };
+  | {
+      kind: "error";
+      entry: Entry;
+      message: string;
+      // Snapshot of where the panel was right before the error so the
+      // "Back to entry" button can dismiss the error without forcing a
+      // fresh round-trip. Null when the error happened during the
+      // initial entry load (no prior non-error state to return to).
+      previous: PanelState | null;
+    };
 
 export function ReconstructionPanel({
   entry,
@@ -124,10 +134,14 @@ export function ReconstructionPanel({
       })
       .catch((err) => {
         if (activeEntryRef.current !== entry.id) return;
+        // No previous state to fall back to — this catch fires on the
+        // initial load. The error view will fall back to refetch via
+        // its Retry button.
         setState({
           kind: "error",
           entry,
           message: err instanceof Error ? err.message : String(err),
+          previous: null,
         });
       });
   }, [entry?.id, entry?.state, reloadKey]);
@@ -152,6 +166,9 @@ export function ReconstructionPanel({
 
   async function onAttempt(opts: { force?: boolean } = {}) {
     if (state.kind !== "miss" && state.kind !== "done") return;
+    // Snapshot the state we're leaving so the error view can offer a
+    // one-click "back to entry" without firing another round-trip.
+    const previousState = state;
     const targetEntry = state.entry;
     setRunning(true);
     try {
@@ -175,7 +192,12 @@ export function ReconstructionPanel({
           : err instanceof Error
             ? err.message
             : String(err);
-      setState({ kind: "error", entry: targetEntry, message: msg });
+      setState({
+        kind: "error",
+        entry: targetEntry,
+        message: msg,
+        previous: previousState,
+      });
     } finally {
       setRunning(false);
     }
@@ -183,6 +205,7 @@ export function ReconstructionPanel({
 
   async function onSave() {
     if (state.kind !== "done") return;
+    const previousState = state;
     setSaving(true);
     try {
       const data = await savePicks(state.entry.id, draftPicks, draftNotes || null);
@@ -196,7 +219,12 @@ export function ReconstructionPanel({
       setTimeout(() => setSavedFlash(false), 2000);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      setState({ kind: "error", entry: state.entry, message: msg });
+      setState({
+        kind: "error",
+        entry: state.entry,
+        message: msg,
+        previous: previousState,
+      });
     } finally {
       setSaving(false);
     }
@@ -300,6 +328,14 @@ export function ReconstructionPanel({
         {state.kind === "error" && (
           <ErrorView
             message={state.message}
+            onBack={
+              state.previous
+                ? (() => {
+                    const previous = state.previous;
+                    return () => setState(previous);
+                  })()
+                : undefined
+            }
             onRetry={() => {
               activeEntryRef.current = state.entry.id;
               setState({ kind: "loading", entry: state.entry });
@@ -331,6 +367,7 @@ export function ReconstructionPanel({
                     kind: "error",
                     entry: state.entry,
                     message: err instanceof Error ? err.message : String(err),
+                    previous: null,
                   });
                 });
             }}
@@ -413,18 +450,33 @@ function CenteredSpinner({ label }: { label: string }) {
 function ErrorView({
   message,
   onRetry,
+  onBack,
 }: {
   message: string;
   onRetry: () => void;
+  /** When set, render a "Back to entry" button that restores the
+   *  previous panel state (the one we were in right before the failed
+   *  action). Lets the annotator bail out of an error without re-firing
+   *  the request — useful when the AI service is down and they want to
+   *  fall back to Browse-ACD instead. */
+  onBack?: () => void;
 }) {
   return (
     <div className="px-6 py-12 flex flex-col items-center gap-3 text-sm">
       <AlertCircle className="h-5 w-5 text-rose-600" />
       <p className="text-center text-muted-foreground">{message}</p>
-      <Button onClick={onRetry} variant="outline" size="sm">
-        <RefreshCw className="h-3.5 w-3.5" />
-        Retry
-      </Button>
+      <div className="flex items-center gap-2">
+        {onBack && (
+          <Button onClick={onBack} variant="ghost" size="sm">
+            <ArrowLeft className="h-3.5 w-3.5" />
+            Back to entry
+          </Button>
+        )}
+        <Button onClick={onRetry} variant="outline" size="sm">
+          <RefreshCw className="h-3.5 w-3.5" />
+          Retry
+        </Button>
+      </div>
     </div>
   );
 }
