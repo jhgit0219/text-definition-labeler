@@ -244,7 +244,7 @@ function ReviewPage() {
     const d = await res.json();
     setEntries((prev) => prev.map((e) => (e.id === active.id ? d.entry : e)));
 
-    if (newState !== "pending") {
+    if (newState === "rejected" || newState === "no_ouv") {
       const next = entries.find(
         (e) =>
           e.id !== active.id &&
