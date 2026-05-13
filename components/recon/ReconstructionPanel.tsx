@@ -59,7 +59,7 @@ type PanelState =
   | { kind: "no-entry" }
   | { kind: "not-accepted"; entry: Entry }
   | { kind: "loading"; entry: Entry }
-  | { kind: "miss"; entry: Entry; spreadsheet: SpreadsheetProtosDto | null }
+  | { kind: "miss"; entry: Entry; data: ReconResponseDto }
   | { kind: "queued"; entry: Entry; job: ActiveJobDto; spreadsheet: SpreadsheetProtosDto | null }
   | { kind: "done"; entry: Entry; data: ReconResponseDto }
   | { kind: "error"; entry: Entry; message: string; previous: PanelState | null };
@@ -116,14 +116,15 @@ export function ReconstructionPanel({
           return;
         }
         if (data.reconstruction === null) {
-          setState({
-            kind: "miss",
-            entry,
-            spreadsheet: data.spreadsheetProtos,
-          });
-          setDraftPicks([]);
+          const initialPicks: PickInput[] = data.picks.map((p) => ({
+            pidno: p.pidno,
+            isPrimary: p.isPrimary,
+            source: p.source,
+          }));
+          setState({ kind: "miss", entry, data });
+          setDraftPicks(initialPicks);
           setDraftNotes(data.entryNotes ?? "");
-          setSavedSnapshot({ picks: [], notes: data.entryNotes ?? "" });
+          setSavedSnapshot({ picks: initialPicks, notes: data.entryNotes ?? "" });
           return;
         }
         const initialPicks: PickInput[] = data.picks.map((p) => ({
@@ -178,7 +179,7 @@ export function ReconstructionPanel({
             kind: "error",
             entry: state.entry,
             message: job.errorMessage ?? "Reconstruction failed",
-            previous: { kind: "miss", entry: state.entry, spreadsheet: state.spreadsheet },
+            previous: null,
           });
           return;
         }
@@ -218,10 +219,7 @@ export function ReconstructionPanel({
     if (state.kind !== "miss" && state.kind !== "done") return;
     const previousState = state;
     const targetEntry = state.entry;
-    const spreadsheet =
-      state.kind === "miss"
-        ? state.spreadsheet
-        : state.data.spreadsheetProtos;
+    const spreadsheet = state.data.spreadsheetProtos;
     setRunning(true);
     try {
       await enqueueReconstruction(targetEntry.id, opts);
@@ -245,7 +243,7 @@ export function ReconstructionPanel({
   }
 
   async function onSave() {
-    if (state.kind !== "done") return;
+    if (state.kind !== "done" && state.kind !== "miss") return;
     const previousState = state;
     setSaving(true);
     try {
@@ -357,10 +355,15 @@ export function ReconstructionPanel({
         {state.kind === "miss" && (
           <MissView
             entry={state.entry}
-            spreadsheet={state.spreadsheet}
+            data={state.data}
+            draftPicks={draftPicks}
+            onSetPrimary={setPrimary}
+            onRemoveManualPick={removeManualPick}
             onAttempt={() => onAttempt()}
             running={running}
             onBrowseAcd={onBrowseAcd}
+            draftNotes={draftNotes}
+            onNotesChange={setDraftNotes}
           />
         )}
         {state.kind === "queued" && (
@@ -401,11 +404,18 @@ export function ReconstructionPanel({
                     });
                     setState({ kind: "done", entry: state.entry, data });
                   } else {
-                    setState({
-                      kind: "miss",
-                      entry: state.entry,
-                      spreadsheet: data.spreadsheetProtos,
+                    const initialPicks: PickInput[] = data.picks.map((p) => ({
+                      pidno: p.pidno,
+                      isPrimary: p.isPrimary,
+                      source: p.source,
+                    }));
+                    setDraftPicks(initialPicks);
+                    setDraftNotes(data.entryNotes ?? "");
+                    setSavedSnapshot({
+                      picks: initialPicks,
+                      notes: data.entryNotes ?? "",
                     });
+                    setState({ kind: "miss", entry: state.entry, data });
                   }
                 })
                 .catch((err) => {
@@ -465,7 +475,7 @@ export function ReconstructionPanel({
         )}
       </div>
 
-      {state.kind === "done" && (
+      {(state.kind === "done" || state.kind === "miss") && (
         <footer className="px-4 py-3 border-t border-border flex-shrink-0 flex items-center gap-2">
           <Button
             onClick={onSave}
@@ -594,23 +604,53 @@ function QueuedView({
 
 function MissView({
   entry,
-  spreadsheet,
+  data,
+  draftPicks,
+  draftNotes,
+  onSetPrimary,
+  onRemoveManualPick,
+  onNotesChange,
   onAttempt,
   running,
   onBrowseAcd,
 }: {
   entry: Entry;
-  spreadsheet: SpreadsheetProtosDto | null;
+  data: ReconResponseDto;
+  draftPicks: PickInput[];
+  draftNotes: string;
+  onSetPrimary: (pidno: number) => void;
+  onRemoveManualPick: (pidno: number) => void;
+  onNotesChange: (s: string) => void;
   onAttempt: () => void;
   running: boolean;
   onBrowseAcd?: (prefix: string) => void;
 }) {
+  const manualPicks = useMemo(() => {
+    const byPidno = new Map(data.picks.map((p) => [p.pidno, p]));
+    return draftPicks
+      .filter((p) => p.source === "manual")
+      .map((p) => {
+        const original = byPidno.get(p.pidno);
+        return {
+          pidno: p.pidno,
+          isPrimary: p.isPrimary,
+          protoForm: original?.protoForm ?? `pidno ${p.pidno}`,
+          protoCode: original?.protoCode ?? null,
+          glossText: original?.glossText ?? null,
+          setNum: original?.setNum ?? null,
+          reflexCount: original?.reflexCount ?? null,
+        };
+      });
+  }, [draftPicks, data.picks]);
+
   return (
     <div className="px-4 py-4 space-y-4">
-      {spreadsheet && <SpreadsheetReferenceCard data={spreadsheet} />}
+      {data.spreadsheetProtos && (
+        <SpreadsheetReferenceCard data={data.spreadsheetProtos} />
+      )}
       <div className="border border-dashed border-border rounded p-4 text-center space-y-3">
         <p className="text-sm text-muted-foreground">
-          No reconstruction yet for{" "}
+          No AI reconstruction yet for{" "}
           <span className="font-mono font-medium text-foreground">
             {entry.text}
           </span>{" "}
@@ -634,7 +674,44 @@ function MissView({
           )}
         </Button>
       </div>
+      {manualPicks.length > 0 && (
+        <section className="space-y-1.5">
+          <h4 className="text-xs uppercase tracking-wide font-semibold text-muted-foreground">
+            Manual picks{" "}
+            <span className="font-normal opacity-70">
+              ({manualPicks.length})
+            </span>
+          </h4>
+          <ul className="space-y-1.5">
+            {manualPicks.map((p) => (
+              <ManualPickRow
+                key={p.pidno}
+                pidno={p.pidno}
+                protoForm={p.protoForm}
+                protoCode={p.protoCode}
+                glossText={p.glossText}
+                setNum={p.setNum}
+                reflexCount={p.reflexCount}
+                isPrimary={p.isPrimary}
+                onRemove={() => onRemoveManualPick(p.pidno)}
+                onSetPrimary={() => onSetPrimary(p.pidno)}
+              />
+            ))}
+          </ul>
+        </section>
+      )}
       <BrowseAcdLink entry={entry} onBrowseAcd={onBrowseAcd} />
+      <div className="space-y-1.5">
+        <Label htmlFor="miss-notes">Notes</Label>
+        <textarea
+          id="miss-notes"
+          value={draftNotes}
+          onChange={(e) => onNotesChange(e.target.value)}
+          placeholder="(annotator comments)"
+          rows={3}
+          className="w-full text-sm rounded border border-input bg-background px-3 py-2 font-mono placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+        />
+      </div>
     </div>
   );
 }
