@@ -1,6 +1,6 @@
 # Text Definition Labeler
 
-Web-based review + correction tool for OCR-extracted text/definition pairs. Sibling to the inference pipeline in `../OCR-Cursive-Scanner/`. The scanner produces predictions; this app lets a small team review them, mark accept/reject/no-OUV, edit text + gloss, and export the validated set as xlsx for analysis.
+Web-based review + correction tool for OCR-extracted text/definition pairs from Tomás de San Jerónimo's 1729 Bisaya manuscript. Sibling to the inference pipeline in `../OCR-Cursive-Scanner/` (text/gloss prediction) and `../bisaya-reconstruction/` (PMP/PAn cognate reconstruction). The scanner produces predictions; this app lets a small team review them, edit text + gloss, accept/reject/no-OUV them, attach PMP cognate picks per accepted entry, and export the validated set as xlsx for analysis.
 
 ## Stack
 
@@ -42,7 +42,35 @@ entries (
   pred_text_raw, pred_gloss_raw,
   snapped_from,     -- pre-dict-snap prediction, if any
   bbox_regions,     -- JSONB: [{page, bbox: [x,y,w,h]}, …]
-  source, created_at, updated_at
+  source,           -- 'qwen_v2' | 'gemini' | 'spreadsheet_v1' | ...
+  notes,            -- annotator commentary (per entry)
+  spreadsheet_protos, -- JSONB: {pan, pmp, pcph, pb, status, notes} from schwa spreadsheet, nullable
+  created_at, updated_at
+)
+
+reconstructions (        -- AI ranking cache, keyed by text + gloss
+  id, text, gloss,
+  model_id, prompt_version, schema_version,
+  rankings,              -- JSONB: ranked candidate list (RankedResult shape)
+  status, error_msg, computed_at,
+  UNIQUE (text, gloss, model_id, prompt_version)
+)
+
+entry_reconstruction_picks (  -- annotator's selected cognate(s) per entry
+  id, entry_id (FK), reconstruction_id (FK, nullable for manual picks),
+  pidno, proto_form, is_primary,
+  source,                -- 'ai' | 'manual'
+  created_at,
+  UNIQUE (entry_id, pidno)
+)
+
+acd_reconstructions (    -- full ACD corpus, ~12K rows
+  pidno (PK), proto_code, form, form_plain, gloss_text, set_num, first_letter
+)
+
+acd_reflexes (           -- daughter-language reflexes, ~107K rows
+  id (PK), pidno (FK), subgroup_code, language_name, form, form_plain,
+  gloss_text, position
 )
 ```
 
@@ -72,10 +100,35 @@ To upgrade later to per-user auth: replace `lib/auth.ts`'s Credentials `authoriz
 | GET | `/api/entries?page=N` | list entries on a page |
 | PATCH | `/api/entries/:id` | update text / gloss / state |
 | GET | `/api/page-image/:page` | serve / redirect to page render |
-| POST | `/api/export` | download xlsx of all accepted entries |
-| POST | `/api/export/page/:page` | download xlsx of one page's accepted entries |
+| POST | `/api/export[?picks_only=1]` | download xlsx of all accepted entries with their picks |
+| POST | `/api/export/page/:page[?picks_only=1]` | download xlsx of one page's accepted entries |
+| GET | `/api/recon/:entry_id` | reconstruction cache lookup; includes entry, picks, spreadsheet protos |
+| POST | `/api/recon/:entry_id[?force=1]` | "Attempt with AI" (gated by feature flag); `force=1` replaces existing |
+| PUT | `/api/recon/:entry_id/picks` | replace pick set + notes transactionally |
+| POST | `/api/recon/:entry_id/picks/append` | append a single manual pick (from /dictionary) |
+| GET | `/api/acd/prefixes` | histogram of 2-letter prefixes in the corpus |
+| GET | `/api/acd/prefix/:prefix[?layers=PMP,PAN]` | rows for a prefix |
+| GET | `/api/acd/reconstruction/:pidno` | one row + all its reflexes |
+| GET | `/api/acd/search?q=…[&layers=…]` | corpus-wide search across form / gloss / proto-code |
 
-Both export endpoints stream xlsx directly as `Content-Disposition: attachment` — nothing written to server disk.
+Both export endpoints stream xlsx directly as `Content-Disposition: attachment` — nothing written to server disk. Export columns include `Primary proto`, `Alt protos`, `Notes`, `Pidnos` joined per entry.
+
+## Reconstruction workflow
+
+The right-side 4th panel of `/review` shows ranked PMP cognate candidates for each accepted entry. Candidates come from a cache (`reconstructions` table) populated by:
+
+1. **Seed prefill** — the sibling `bisaya-reconstruction` repo computed 44 reconstructions offline (Claude conversation agents) and migrated them into Postgres via `bisaya-reconstruction/service/scripts/migrate_sqlite_to_postgres.py`.
+2. **Schwa spreadsheet import** — `bisaya-reconstruction/service/scripts/import_spreadsheet.py` pushed 568 accepted text-gloss pairs (with their multi-layer proto-form metadata) into `entries`.
+3. **ACD corpus import** — `bisaya-reconstruction/service/scripts/import_acd_to_postgres.py` loaded the full 12K-reconstruction / 107K-reflex corpus into `acd_reconstructions` + `acd_reflexes` so the dictionary browse view works without a Python service running.
+
+Annotators can:
+
+- Check AI-ranked candidates and mark a primary via the candidate list.
+- Click "Browse the full ACD →" to open a drawer over /review and pick any reconstruction from the corpus (manual picks, marked with `source='manual'`).
+- Add freeform notes per entry.
+- Save all picks + notes transactionally.
+
+The live "Attempt with AI" call to the Python FastAPI service is gated behind the `NEXT_PUBLIC_AI_RECONSTRUCTION_ENABLED` flag (off by default — see Setup).
 
 ## Importing existing JSON state
 
@@ -85,6 +138,15 @@ The OCR scanner produces `output/page_NNN_inference/results.json` and `review.js
 
 1. Push this repo to GitHub
 2. Connect to Vercel
-3. Set env vars in project settings: `DATABASE_URL`, `NEXTAUTH_SECRET`, `NEXTAUTH_URL`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `PAGE_IMAGES_BASE_URL`
-4. Deploy
-5. Inference itself stays local — it needs a GPU. Run inference on your machine, then write results into the Postgres that Vercel reads.
+3. Set env vars in project settings:
+   - `DATABASE_URL` — Postgres connection string (Neon / Supabase / Vercel Postgres)
+   - `NEXTAUTH_SECRET` — `openssl rand -base64 32`
+   - `NEXTAUTH_URL` — production URL (leave unset on Vercel; it auto-fills)
+   - `ADMIN_USERNAME` + `ADMIN_PASSWORD` — shared login
+   - `PAGE_IMAGES_BASE_URL` — Vercel Blob / S3 / R2 base URL for page PNGs
+   - `NEXT_PUBLIC_AI_RECONSTRUCTION_ENABLED` — leave unset (or `0`) until the Python reconstruction service is hosted; `1` enables the live AI call
+   - `RECONSTRUCTION_SERVICE_URL` — only needed when the flag above is `1`; URL of the FastAPI service in `bisaya-reconstruction/service/`
+4. Run `npm run db:migrate` once locally (Vercel doesn't auto-migrate). The migrations under `drizzle/` are additive + idempotent — re-runs are safe.
+5. (Optional) Seed reconstructions: import the schwa spreadsheet and ACD corpus via the scripts in `../bisaya-reconstruction/service/scripts/`. See that repo's README.
+6. Deploy. The dictionary browse + cached AI reconstructions work without the Python service. The "Attempt with AI" path stays disabled until the flag is flipped.
+7. Inference itself stays local — it needs a GPU. Run inference on your machine, then write results into the Postgres that Vercel reads.
