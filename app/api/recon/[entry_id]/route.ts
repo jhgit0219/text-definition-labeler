@@ -351,6 +351,10 @@ export async function POST(
     })
     .returning();
 
+  // Wake the worker via LISTEN/NOTIFY. The worker also polls, so this is
+  // pure latency optimisation — a NOTIFY failure here is harmless.
+  await db.execute(sql`SELECT pg_notify('recon_jobs_new', ${String(inserted.id)})`);
+
   const position = await loadJobPosition(inserted);
   const body: EnqueueResponse = {
     jobId: inserted.id,

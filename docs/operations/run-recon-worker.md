@@ -8,8 +8,13 @@ spawns `claude -p`, and writes the result back.
 
 - `claude` CLI on `PATH` and logged into your Max subscription.
 - `DATABASE_URL` pointing at the same Postgres the labeler uses.
+- (Recommended) `WORKER_DATABASE_URL` pointing at the **direct, unpooled**
+  Postgres URL. The labeler typically uses a pooled URL (Neon's `-pooler`
+  hostname, Supabase pgbouncer) which silently drops LISTEN/NOTIFY. The
+  worker falls back to polling without it, just slower to wake.
 - The `claude-batch-runner` package installed editable:
-  ```
+
+  ```powershell
   pip install -e D:\Projects\Portfolio\Tools\claude-batch-runner
   ```
 
