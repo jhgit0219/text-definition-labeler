@@ -101,6 +101,11 @@ function DictionaryPage() {
   const [pickedPidnos, setPickedPidnos] = useState<Set<number>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  // Default-collapsed prefix nav: usually the user arrives with a
+  // specific prefix already targeted (via Browse-ACD link from the
+  // recon panel), so showing only that letter's row keeps the header
+  // small. Toggle expands to all letters.
+  const [navExpanded, setNavExpanded] = useState(false);
 
   // One-shot fetch of the prefix histogram.
   useEffect(() => {
@@ -318,59 +323,17 @@ function DictionaryPage() {
         </div>
 
         {/* Prefix nav — one row per letter, with 2-letter sub-prefix chips
-            inside. Each chip is min-width-fixed so they form a clean grid
-            instead of a ragged wall of variable-width buttons. The nav is
-            capped at 40vh and scrolls internally so the results below
-            stay visible without a huge initial scroll. */}
-        <nav className="px-6 pb-3 space-y-1.5 max-h-[40vh] overflow-y-auto">
-          {Array.from(prefixByLetter.keys())
-            .sort()
-            .map((letter) => {
-              const chips = prefixByLetter.get(letter) ?? [];
-              return (
-                <div
-                  key={letter}
-                  className="flex items-center gap-3"
-                >
-                  <span className="font-mono uppercase text-sm font-bold text-foreground w-6 flex-shrink-0 text-center">
-                    {letter}
-                  </span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {chips.map((c) => {
-                      const active = c.prefix === prefixParam;
-                      return (
-                        <button
-                          key={c.prefix}
-                          onClick={() => goToPrefix(c.prefix)}
-                          className={cn(
-                            "inline-flex items-baseline justify-center gap-1.5",
-                            "min-w-[3.75rem] px-2.5 py-1",
-                            "text-sm font-mono rounded-md border transition-colors",
-                            active
-                              ? "bg-foreground text-background border-foreground"
-                              : "border-transparent text-muted-foreground hover:border-border hover:bg-muted hover:text-foreground",
-                          )}
-                          title={`${c.count} reconstructions starting with ${c.prefix}`}
-                        >
-                          <span className="font-medium">{c.prefix}</span>
-                          <span
-                            className={cn(
-                              "text-[10px] tabular-nums",
-                              active
-                                ? "text-background/60"
-                                : "text-muted-foreground/60",
-                            )}
-                          >
-                            {c.count}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })}
-        </nav>
+            inside. Default-collapsed: only the current letter row is shown
+            plus a toggle to expand the full list. Each chip has a fixed
+            min-width so they grid-align across the row instead of forming
+            a ragged wall of variable-width buttons. */}
+        <PrefixNav
+          prefixByLetter={prefixByLetter}
+          activePrefix={prefixParam}
+          expanded={navExpanded}
+          onToggleExpand={() => setNavExpanded((v) => !v)}
+          onPickPrefix={goToPrefix}
+        />
       </header>
 
       {/* Page body — scrollable list, no pagination */}
@@ -434,6 +397,110 @@ function DictionaryPage() {
           )}
         </div>
       </main>
+    </div>
+  );
+}
+
+function PrefixNav({
+  prefixByLetter,
+  activePrefix,
+  expanded,
+  onToggleExpand,
+  onPickPrefix,
+}: {
+  prefixByLetter: Map<string, PrefixHistEntry[]>;
+  activePrefix: string;
+  expanded: boolean;
+  onToggleExpand: () => void;
+  onPickPrefix: (prefix: string) => void;
+}) {
+  const allLetters = useMemo(
+    () => Array.from(prefixByLetter.keys()).sort(),
+    [prefixByLetter],
+  );
+  const activeLetter = (activePrefix || "").charAt(0);
+  // When collapsed we show only the row matching the active prefix's
+  // first letter. If the active letter isn't in the corpus (rare),
+  // fall back to the first letter that is.
+  const visibleLetters = expanded
+    ? allLetters
+    : allLetters.filter(
+        (l) => l === activeLetter || (!allLetters.includes(activeLetter) && l === allLetters[0]),
+      );
+
+  return (
+    <div className="px-6 pb-3">
+      <div className="flex items-center justify-between gap-2 mb-1.5">
+        <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
+          {expanded ? "All prefixes" : `Letter ${activeLetter.toUpperCase() || "—"}`}
+        </span>
+        <button
+          type="button"
+          onClick={onToggleExpand}
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+        >
+          {expanded ? (
+            <>
+              <ChevronDown className="h-3.5 w-3.5" />
+              hide all letters
+            </>
+          ) : (
+            <>
+              <ChevronRight className="h-3.5 w-3.5" />
+              show all letters
+            </>
+          )}
+        </button>
+      </div>
+      <nav
+        className={cn(
+          "space-y-1.5",
+          expanded && "max-h-[40vh] overflow-y-auto pr-1",
+        )}
+      >
+        {visibleLetters.map((letter) => {
+          const chips = prefixByLetter.get(letter) ?? [];
+          return (
+            <div key={letter} className="flex items-center gap-3">
+              <span className="font-mono uppercase text-sm font-bold text-foreground w-6 flex-shrink-0 text-center">
+                {letter}
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {chips.map((c) => {
+                  const active = c.prefix === activePrefix;
+                  return (
+                    <button
+                      key={c.prefix}
+                      onClick={() => onPickPrefix(c.prefix)}
+                      className={cn(
+                        "inline-flex items-baseline justify-center gap-1.5",
+                        "min-w-[3.75rem] px-2.5 py-1",
+                        "text-sm font-mono rounded-md border transition-colors",
+                        active
+                          ? "bg-foreground text-background border-foreground"
+                          : "border-transparent text-muted-foreground hover:border-border hover:bg-muted hover:text-foreground",
+                      )}
+                      title={`${c.count} reconstructions starting with ${c.prefix}`}
+                    >
+                      <span className="font-medium">{c.prefix}</span>
+                      <span
+                        className={cn(
+                          "text-[10px] tabular-nums",
+                          active
+                            ? "text-background/60"
+                            : "text-muted-foreground/60",
+                        )}
+                      >
+                        {c.count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </nav>
     </div>
   );
 }

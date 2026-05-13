@@ -27,14 +27,27 @@ export const revalidate = 0;
  * once on mount.
  */
 export async function GET() {
-  const prefixExpr = sql<string>`LOWER(SUBSTRING(${schema.acdReconstructions.formPlain}, 1, 2))`;
+  // Take the first two characters of the lowercased form_plain. The
+  // ascii(...) check below is explicit ASCII-byte filtering instead of
+  // `~ '^[a-z][a-z]$'` — POSIX character classes in PostgreSQL's
+  // default UTF-8 collation are locale-aware, so `[a-z]` happily
+  // matches `ŋ`, `ə`, `ñ`, and other Latin-extended letters used in
+  // proto-form transcription. We only want a..z, byte values 97-122.
+  const formPlain = schema.acdReconstructions.formPlain;
+  const prefixExpr = sql<string>`LOWER(SUBSTRING(${formPlain}, 1, 2))`;
   const rows = await db
     .select({
       prefix: prefixExpr.as("prefix"),
       count: sql<number>`COUNT(*)::int`.as("count"),
     })
     .from(schema.acdReconstructions)
-    .where(sql`${prefixExpr} ~ '^[a-z][a-z]$'`)
+    .where(
+      sql`
+        LENGTH(${formPlain}) >= 2
+        AND ASCII(LOWER(SUBSTRING(${formPlain}, 1, 1))) BETWEEN 97 AND 122
+        AND ASCII(LOWER(SUBSTRING(${formPlain}, 2, 1))) BETWEEN 97 AND 122
+      `,
+    )
     .groupBy(prefixExpr)
     .orderBy(asc(prefixExpr));
   return NextResponse.json({ prefixes: rows });
