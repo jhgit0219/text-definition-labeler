@@ -801,11 +801,13 @@ function DictionaryDrawer({
 
   return (
     <div className="fixed inset-0 z-50 flex" role="dialog" aria-modal="true">
-      <button
-        type="button"
-        aria-label="close dictionary"
-        onClick={onClose}
-        className="flex-1 bg-black/40 backdrop-blur-[1px] cursor-default"
+      {/* Backdrop is non-interactive: clicks here intentionally do
+          NOTHING. The user lost picks once after accidentally clicking
+          out while scanning a long row — only the explicit close
+          button (or Esc) dismisses the drawer now. */}
+      <div
+        aria-hidden="true"
+        className="flex-1 bg-black/40 backdrop-blur-[1px]"
       />
       <div className="w-[min(96vw,72rem)] bg-background shadow-2xl flex flex-col">
         <DictionaryView
