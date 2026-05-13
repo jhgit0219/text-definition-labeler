@@ -364,3 +364,35 @@ export async function POST(
   };
   return NextResponse.json(body, { status: 202 });
 }
+
+// DELETE: drop the AI rankings for this entry so the panel returns to
+// the cache-miss state. Picks are NOT touched — they live on
+// entry_reconstruction_picks and remain attached. Settled recon_jobs
+// rows are kept as an audit trail.
+export async function DELETE(
+  _req: NextRequest,
+  { params }: { params: { entry_id: string } },
+) {
+  const entryId = parseEntryId(params.entry_id);
+  if (entryId === null) {
+    return NextResponse.json({ error: "bad entry_id" }, { status: 400 });
+  }
+  const entry = await loadEntry(entryId);
+  if (!entry) {
+    return NextResponse.json({ error: "entry not found" }, { status: 404 });
+  }
+  const text = normalizeText(entry.text);
+  const gloss = normalizeGloss(entry.glossRaw);
+  const deleted = await db
+    .delete(schema.reconstructions)
+    .where(
+      and(
+        eq(schema.reconstructions.text, text),
+        eq(schema.reconstructions.gloss, gloss),
+        eq(schema.reconstructions.modelId, CANONICAL_MODEL_ID),
+        eq(schema.reconstructions.promptVersion, CANONICAL_PROMPT_VERSION),
+      ),
+    )
+    .returning({ id: schema.reconstructions.id });
+  return NextResponse.json({ deleted: deleted.length });
+}

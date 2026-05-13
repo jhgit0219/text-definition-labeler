@@ -187,6 +187,13 @@ export async function fetchActiveJob(
   return body.job;
 }
 
+export async function clearReconstruction(
+  entryId: number,
+): Promise<{ deleted: number }> {
+  const res = await fetch(`/api/recon/${entryId}`, { method: "DELETE" });
+  return parseResponse<{ deleted: number }>(res);
+}
+
 /** PUT /api/recon/[entry_id]/picks — replace pick set + notes transactionally. */
 export interface PickInput {
   pidno: number;

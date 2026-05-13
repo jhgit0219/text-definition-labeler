@@ -12,6 +12,7 @@ import {
   RefreshCw,
   Sparkles,
   Star,
+  Trash2,
   X,
 } from "lucide-react";
 
@@ -23,6 +24,7 @@ import { groupBySubgroup } from "@/lib/recon/subgroups";
 import {
   fetchReconstruction,
   enqueueReconstruction,
+  clearReconstruction,
   fetchActiveJob,
   savePicks,
   ReconError,
@@ -71,6 +73,7 @@ export function ReconstructionPanel({
   const [running, setRunning] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
+  const [internalReload, setInternalReload] = useState(0);
 
   // Form state that overlays the fetched picks/notes — lets the user toggle
   // without round-tripping every keystroke.
@@ -142,7 +145,7 @@ export function ReconstructionPanel({
           previous: null,
         });
       });
-  }, [entry?.id, entry?.state, reloadKey]);
+  }, [entry?.id, entry?.state, reloadKey, internalReload]);
 
   // Poll the job endpoint while we're in the queued state. Transitions:
   //   pending/running -> done  : refetch GET /api/recon, switch to "done"
@@ -438,6 +441,26 @@ export function ReconstructionPanel({
               onAttempt({ force: true });
             }}
             rerunning={running}
+            onClear={async () => {
+              if (
+                !window.confirm(
+                  "Clear the AI rankings for this word? Your picks stay attached, but the panel will show as cache-miss until you click Attempt with AI again.",
+                )
+              ) {
+                return;
+              }
+              try {
+                await clearReconstruction(state.entry.id);
+                setInternalReload((k) => k + 1);
+              } catch (err) {
+                setState({
+                  kind: "error",
+                  entry: state.entry,
+                  message: err instanceof Error ? err.message : String(err),
+                  previous: state,
+                });
+              }
+            }}
           />
         )}
       </div>
@@ -718,6 +741,7 @@ function DoneView({
   onBrowseAcd,
   onRerun,
   rerunning,
+  onClear,
 }: {
   data: ReconResponseDto;
   draftPicks: PickInput[];
@@ -729,6 +753,7 @@ function DoneView({
   onBrowseAcd?: (prefix: string) => void;
   onRerun: () => void;
   rerunning: boolean;
+  onClear: () => void;
 }) {
   const recon = data.reconstruction!;
   const rankings = recon.rankings;
@@ -796,26 +821,38 @@ function DoneView({
           <span>·</span>
           <span>{new Date(recon.computedAt).toLocaleDateString()}</span>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onRerun}
-          disabled={rerunning}
-          className="text-xs text-muted-foreground hover:text-foreground"
-          title="Replace these rankings with a fresh AI run. Existing picks stay attached."
-        >
-          {rerunning ? (
-            <>
-              <Loader2 className="h-3 w-3 animate-spin" />
-              re-running…
-            </>
-          ) : (
-            <>
-              <Sparkles className="h-3 w-3" />
-              re-run with AI
-            </>
-          )}
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onClear}
+            className="text-xs text-muted-foreground hover:text-destructive"
+            title="Delete these AI rankings. Picks stay attached; the panel returns to cache-miss."
+          >
+            <Trash2 className="h-3 w-3" />
+            clear
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onRerun}
+            disabled={rerunning}
+            className="text-xs text-muted-foreground hover:text-foreground"
+            title="Replace these rankings with a fresh AI run. Existing picks stay attached."
+          >
+            {rerunning ? (
+              <>
+                <Loader2 className="h-3 w-3 animate-spin" />
+                re-running…
+              </>
+            ) : (
+              <>
+                <Sparkles className="h-3 w-3" />
+                re-run with AI
+              </>
+            )}
+          </Button>
+        </div>
       </div>
       {manualOrphanPicks.length > 0 && (
         <section className="space-y-1.5">
