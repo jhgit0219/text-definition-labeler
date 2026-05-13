@@ -49,6 +49,8 @@ export interface SpreadsheetProtos {
 interface ReconResponseDto {
   entry: {
     id: number;
+    page: number;
+    entryIdx: number;
     text: string;
     glossRaw: string;
     state: string;
@@ -99,7 +101,14 @@ function parseEntryId(raw: string): number | null {
 }
 
 function toDto(
-  entry: { id: number; text: string; glossRaw: string; state: string },
+  entry: {
+    id: number;
+    page: number;
+    entryIdx: number;
+    text: string;
+    glossRaw: string;
+    state: string;
+  },
   row: ReconstructionRow | null,
   picks: PickRow[],
   entryNotes: string | null,
@@ -110,6 +119,8 @@ function toDto(
   return {
     entry: {
       id: entry.id,
+      page: entry.page,
+      entryIdx: entry.entryIdx,
       text: entry.text,
       glossRaw: entry.glossRaw,
       state: entry.state,
@@ -174,6 +185,8 @@ async function loadEntry(entryId: number) {
   const [entry] = await db
     .select({
       id: schema.entries.id,
+      page: schema.entries.page,
+      entryIdx: schema.entries.entryIdx,
       text: schema.entries.text,
       glossRaw: schema.entries.glossRaw,
       state: schema.entries.state,

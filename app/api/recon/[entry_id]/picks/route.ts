@@ -46,7 +46,14 @@ interface PickDto {
 }
 
 interface ReconResponseDto {
-  entry: { id: number; text: string; glossRaw: string; state: string };
+  entry: {
+    id: number;
+    page: number;
+    entryIdx: number;
+    text: string;
+    glossRaw: string;
+    state: string;
+  };
   reconstruction: {
     id: number;
     text: string;
@@ -69,7 +76,14 @@ function parseEntryId(raw: string): number | null {
 }
 
 function toReconDto(
-  entry: { id: number; text: string; glossRaw: string; state: string },
+  entry: {
+    id: number;
+    page: number;
+    entryIdx: number;
+    text: string;
+    glossRaw: string;
+    state: string;
+  },
   row: ReconstructionRow,
   picks: PickRow[],
   entryNotes: string | null,
@@ -77,6 +91,8 @@ function toReconDto(
   return {
     entry: {
       id: entry.id,
+      page: entry.page,
+      entryIdx: entry.entryIdx,
       text: entry.text,
       glossRaw: entry.glossRaw,
       state: entry.state,
@@ -134,6 +150,8 @@ export async function PUT(
   const [entry] = await db
     .select({
       id: schema.entries.id,
+      page: schema.entries.page,
+      entryIdx: schema.entries.entryIdx,
       text: schema.entries.text,
       glossRaw: schema.entries.glossRaw,
       state: schema.entries.state,

@@ -58,7 +58,14 @@ export interface SpreadsheetProtosDto {
 }
 
 export interface ReconResponseDto {
-  entry: { id: number; text: string; glossRaw: string; state: string };
+  entry: {
+    id: number;
+    page: number;
+    entryIdx: number;
+    text: string;
+    glossRaw: string;
+    state: string;
+  };
   reconstruction: ReconstructionRowDto | null;
   picks: ReconstructionPickDto[];
   entryNotes: string | null;

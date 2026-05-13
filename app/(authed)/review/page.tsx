@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { signOut } from "next-auth/react";
 import {
   LogOut,
@@ -97,7 +98,25 @@ const STATE_BADGE_CLASS: Record<EntryState, string> = {
   no_ouv: "bg-amber-50 text-amber-700 border border-amber-300",
 };
 
-export default function ReviewPage() {
+export default function ReviewPageWrapper() {
+  // useSearchParams needs a Suspense boundary for Next.js static gen
+  // and for the page to survive prerender.
+  return (
+    <Suspense fallback={null}>
+      <ReviewPage />
+    </Suspense>
+  );
+}
+
+function ReviewPage() {
+  const searchParams = useSearchParams();
+  const requestedEntryIdRaw = searchParams.get("entry_id");
+  const requestedEntryId = useMemo(() => {
+    if (!requestedEntryIdRaw) return null;
+    const n = Number.parseInt(requestedEntryIdRaw, 10);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }, [requestedEntryIdRaw]);
+
   const [pages, setPages] = useState<PageRow[]>([]);
   const [currentPage, setCurrentPage] = useState<number | null>(null);
   const [entries, setEntries] = useState<Entry[]>([]);
@@ -105,19 +124,46 @@ export default function ReviewPage() {
   const [tab, setTab] = useState<Tab>("all");
   const [draftText, setDraftText] = useState("");
   const [draftGlosses, setDraftGlosses] = useState<string[]>([]);
+  // Pending request to focus a specific entry once its page is loaded.
+  // Set when ?entry_id=N is in the URL — the load sequence is two-step
+  // (lookup entry -> set currentPage -> wait for entries -> setActiveId).
+  const [pendingFocusId, setPendingFocusId] = useState<number | null>(null);
   // Imperative handle on the zoom-pan wrapper so toolbar buttons can drive it.
   const zoomRef = useRef<ReactZoomPanPinchRef | null>(null);
+
+  // If the URL carries entry_id, look up that entry to find its page,
+  // then switch to that page and remember to focus the entry once
+  // entries finish loading. Runs once per URL change.
+  useEffect(() => {
+    if (requestedEntryId === null) return;
+    let cancelled = false;
+    fetch(`/api/recon/${requestedEntryId}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (cancelled || !d?.entry) return;
+        setPendingFocusId(d.entry.id);
+        setCurrentPage(d.entry.page);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [requestedEntryId]);
 
   useEffect(() => {
     fetch("/api/pages")
       .then((r) => r.json())
       .then((d) => {
         setPages(d.pages || []);
-        if (d.pages?.length && currentPage === null) {
+        if (
+          d.pages?.length &&
+          currentPage === null &&
+          requestedEntryId === null
+        ) {
           setCurrentPage(d.pages[0].page);
         }
       });
-  }, []);
+  }, [requestedEntryId]);
 
   useEffect(() => {
     if (currentPage === null) return;
@@ -125,7 +171,21 @@ export default function ReviewPage() {
       .then((r) => r.json())
       .then((d) => {
         setEntries(d.entries || []);
-        setActiveId(null);
+        // If a pending focus is queued and the entry exists on this
+        // page, select it. Otherwise reset selection as before.
+        if (pendingFocusId !== null) {
+          const found = (d.entries || []).some(
+            (e: Entry) => e.id === pendingFocusId,
+          );
+          if (found) {
+            setActiveId(pendingFocusId);
+          } else {
+            setActiveId(null);
+          }
+          setPendingFocusId(null);
+        } else {
+          setActiveId(null);
+        }
       });
   }, [currentPage]);
 
