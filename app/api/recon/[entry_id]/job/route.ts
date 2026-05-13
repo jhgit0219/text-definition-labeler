@@ -6,7 +6,7 @@ import {
   loadJobPosition,
   toActiveJobDto,
   type ActiveJobDto,
-} from "../route";
+} from "@/lib/recon/jobs";
 
 // Polled by the recon panel while a job is pending/running. Returns the
 // latest active job for the entry, OR the most recent settled job

@@ -128,7 +128,7 @@ Annotators can:
 - Add freeform notes per entry.
 - Save all picks + notes transactionally.
 
-The live "Attempt with AI" call to the Python FastAPI service is gated behind the `NEXT_PUBLIC_AI_RECONSTRUCTION_ENABLED` flag (off by default — see Setup).
+"Attempt with AI" enqueues a job in the `recon_jobs` Postgres table. A separate worker (`claude-batch-runner` in worker mode, see `docs/operations/run-recon-worker.md`) polls the table, runs `claude -p`, and writes rankings back. The panel polls the job until it lands.
 
 ## Importing existing JSON state
 
@@ -144,9 +144,7 @@ The OCR scanner produces `output/page_NNN_inference/results.json` and `review.js
    - `NEXTAUTH_URL` — production URL (leave unset on Vercel; it auto-fills)
    - `ADMIN_USERNAME` + `ADMIN_PASSWORD` — shared login
    - `PAGE_IMAGES_BASE_URL` — Vercel Blob / S3 / R2 base URL for page PNGs
-   - `NEXT_PUBLIC_AI_RECONSTRUCTION_ENABLED` — leave unset (or `0`) until the Python reconstruction service is hosted; `1` enables the live AI call
-   - `RECONSTRUCTION_SERVICE_URL` — only needed when the flag above is `1`; URL of the FastAPI service in `bisaya-reconstruction/service/`
 4. Run `npm run db:migrate` once locally (Vercel doesn't auto-migrate). The migrations under `drizzle/` are additive + idempotent — re-runs are safe.
 5. (Optional) Seed reconstructions: import the schwa spreadsheet and ACD corpus via the scripts in `../bisaya-reconstruction/service/scripts/`. See that repo's README.
-6. Deploy. The dictionary browse + cached AI reconstructions work without the Python service. The "Attempt with AI" path stays disabled until the flag is flipped.
+6. Deploy. The dictionary browse + cached AI reconstructions work without a worker; new "Attempt with AI" jobs just sit in `recon_jobs` until a worker runs.
 7. Inference itself stays local — it needs a GPU. Run inference on your machine, then write results into the Postgres that Vercel reads.

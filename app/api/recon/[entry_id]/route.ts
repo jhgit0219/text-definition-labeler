@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 
 import { db, schema } from "@/lib/db";
 import { normalizeText, normalizeGloss } from "@/lib/recon/normalize";
 import { type Ranking } from "@/lib/recon/rankings-schema";
+import {
+  type ActiveJobDto,
+  loadActiveJob,
+  loadJobPosition,
+} from "@/lib/recon/jobs";
 
 // GET  -> cache row + picks + entry meta + activeJob (if any)
 // POST -> enqueue a job in recon_jobs; worker picks it up async
@@ -13,26 +18,14 @@ const CANONICAL_PROMPT_VERSION = "v2-agent";
 
 type ReconstructionRow = typeof schema.reconstructions.$inferSelect;
 type PickRow = typeof schema.entryReconstructionPicks.$inferSelect;
-type JobRow = typeof schema.reconJobs.$inferSelect;
 
-export interface SpreadsheetProtos {
+interface SpreadsheetProtos {
   pan?: string | null;
   pmp?: string | null;
   pcph?: string | null;
   pb?: string | null;
   status?: string | null;
   notes?: string | null;
-}
-
-export interface ActiveJobDto {
-  id: number;
-  status: "pending" | "running" | "done" | "error";
-  position: number | null;
-  enqueuedAt: string;
-  startedAt: string | null;
-  finishedAt: string | null;
-  errorKind: string | null;
-  errorMessage: string | null;
 }
 
 interface ReconResponseDto {
@@ -177,57 +170,6 @@ function pidnosFromRow(row: ReconstructionRow | null): number[] {
   if (!row) return [];
   const rankings = (row.rankings as Ranking[]) ?? [];
   return rankings.map((r) => r.pidno).filter((n) => Number.isFinite(n));
-}
-
-export async function loadActiveJob(entryId: number): Promise<ActiveJobDto | null> {
-  const [job] = await db
-    .select()
-    .from(schema.reconJobs)
-    .where(
-      and(
-        eq(schema.reconJobs.entryId, entryId),
-        inArray(schema.reconJobs.status, ["pending", "running"]),
-      ),
-    )
-    .orderBy(desc(schema.reconJobs.id))
-    .limit(1);
-  if (!job) return null;
-  return toActiveJobDto(job, await loadJobPosition(job));
-}
-
-export async function loadJobById(jobId: number): Promise<JobRow | null> {
-  const [job] = await db
-    .select()
-    .from(schema.reconJobs)
-    .where(eq(schema.reconJobs.id, jobId));
-  return job ?? null;
-}
-
-export async function loadJobPosition(job: JobRow): Promise<number | null> {
-  if (job.status !== "pending") return null;
-  const [{ ahead }] = await db
-    .select({ ahead: sql<number>`COUNT(*)::int`.as("ahead") })
-    .from(schema.reconJobs)
-    .where(
-      and(
-        inArray(schema.reconJobs.status, ["pending", "running"]),
-        sql`${schema.reconJobs.id} < ${job.id}`,
-      ),
-    );
-  return ahead + 1;
-}
-
-export function toActiveJobDto(job: JobRow, position: number | null): ActiveJobDto {
-  return {
-    id: job.id,
-    status: job.status as ActiveJobDto["status"],
-    position,
-    enqueuedAt: job.enqueuedAt.toISOString(),
-    startedAt: job.startedAt?.toISOString() ?? null,
-    finishedAt: job.finishedAt?.toISOString() ?? null,
-    errorKind: job.errorKind,
-    errorMessage: job.errorMessage,
-  };
 }
 
 function toDto(
