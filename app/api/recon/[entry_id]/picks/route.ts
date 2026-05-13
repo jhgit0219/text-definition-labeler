@@ -90,7 +90,7 @@ function toReconDto(
     glossRaw: string;
     state: string;
   },
-  row: ReconstructionRow,
+  row: ReconstructionRow | null,
   picks: PickRow[],
   entryNotes: string | null,
 ): ReconResponseDto {
@@ -103,18 +103,20 @@ function toReconDto(
       glossRaw: entry.glossRaw,
       state: entry.state,
     },
-    reconstruction: {
-      id: row.id,
-      text: row.text,
-      gloss: row.gloss,
-      modelId: row.modelId,
-      promptVersion: row.promptVersion,
-      schemaVersion: row.schemaVersion,
-      rankings: row.rankings as Ranking[],
-      status: row.status,
-      errorMsg: row.errorMsg,
-      computedAt: row.computedAt.toISOString(),
-    },
+    reconstruction: row
+      ? {
+          id: row.id,
+          text: row.text,
+          gloss: row.gloss,
+          modelId: row.modelId,
+          promptVersion: row.promptVersion,
+          schemaVersion: row.schemaVersion,
+          rankings: row.rankings as Ranking[],
+          status: row.status,
+          errorMsg: row.errorMsg,
+          computedAt: row.computedAt.toISOString(),
+        }
+      : null,
     picks: picks.map((p) => ({
       id: p.id,
       pidno: p.pidno,
@@ -203,11 +205,18 @@ export async function PUT(
       recon = loose[0];
     }
   }
-  if (!recon) {
+  // Manual-only pick sets are allowed without a reconstruction (the
+  // annotator may pick from /dictionary before any AI run, or after
+  // clearing the AI rankings via the panel's clear button). AI picks
+  // still require a reconstruction since the validity check joins
+  // against rankings JSONB.
+  const hasAiPick = body.picks.some((p) => (p.source ?? "ai") === "ai");
+  if (hasAiPick && !recon) {
     return NextResponse.json(
       {
         error:
-          "no reconstruction exists for this entry yet; run POST /api/recon/:entry_id first",
+          "AI picks require an existing reconstruction; manual-only picks don't. " +
+          "Either drop the AI picks or run POST /api/recon/:entry_id first.",
       },
       { status: 409 },
     );
@@ -219,7 +228,7 @@ export async function PUT(
   // the /dictionary browse path and don't necessarily appear in the AI's
   // shortlist. Look up proto-form denormalization in whichever table
   // applies so the pick row can be inserted with proto_form populated.
-  const rankings = (recon.rankings as Ranking[]) ?? [];
+  const rankings = (recon?.rankings as Ranking[] | undefined) ?? [];
   const protoByAiPidno = new Map<number, string>();
   for (const r of rankings) {
     protoByAiPidno.set(r.pidno, r.proto_form);
@@ -277,7 +286,7 @@ export async function PUT(
               : protoByManualPidno.get(p.pidno) ?? "";
           return {
             entryId,
-            reconstructionId: source === "ai" ? recon.id : null,
+            reconstructionId: source === "ai" && recon ? recon.id : null,
             pidno: p.pidno,
             protoForm,
             isPrimary: p.isPrimary,
@@ -299,5 +308,5 @@ export async function PUT(
     .from(schema.entryReconstructionPicks)
     .where(eq(schema.entryReconstructionPicks.entryId, entryId));
 
-  return NextResponse.json(toReconDto(entry, recon, picks, body.notes));
+  return NextResponse.json(toReconDto(entry, recon ?? null, picks, body.notes));
 }
