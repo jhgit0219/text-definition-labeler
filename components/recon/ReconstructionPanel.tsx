@@ -41,6 +41,13 @@ interface Entry {
 
 interface Props {
   entry: Entry | null;
+  /** Opens the dictionary drawer over the review page. When omitted the
+   *  panel falls back to a Next.js Link to /dictionary?entry_id=N. */
+  onBrowseAcd?: (initialPrefix: string) => void;
+  /** Bump from the parent to force the panel to re-fetch its data —
+   *  used after a drawer interaction lands a pick or note via the
+   *  cross-component API. */
+  reloadKey?: number;
 }
 
 type PanelState =
@@ -52,7 +59,11 @@ type PanelState =
   | { kind: "done"; entry: Entry; data: ReconResponseDto }
   | { kind: "error"; entry: Entry; message: string };
 
-export function ReconstructionPanel({ entry }: Props) {
+export function ReconstructionPanel({
+  entry,
+  onBrowseAcd,
+  reloadKey,
+}: Props) {
   const [state, setState] = useState<PanelState>({ kind: "no-entry" });
   const [running, setRunning] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -119,7 +130,7 @@ export function ReconstructionPanel({ entry }: Props) {
           message: err instanceof Error ? err.message : String(err),
         });
       });
-  }, [entry?.id, entry?.state]);
+  }, [entry?.id, entry?.state, reloadKey]);
 
   const dirty = useMemo(() => {
     if (!savedSnapshot) return false;
@@ -280,6 +291,7 @@ export function ReconstructionPanel({ entry }: Props) {
             spreadsheet={state.spreadsheet}
             onAttempt={() => onAttempt()}
             running={running}
+            onBrowseAcd={onBrowseAcd}
           />
         )}
         {state.kind === "queued" && (
@@ -333,6 +345,7 @@ export function ReconstructionPanel({ entry }: Props) {
             onSetPrimary={setPrimary}
             onRemoveManualPick={removeManualPick}
             onNotesChange={setDraftNotes}
+            onBrowseAcd={onBrowseAcd}
             onRerun={() => {
               if (
                 draftPicks.length > 0 &&
@@ -421,11 +434,13 @@ function MissView({
   spreadsheet,
   onAttempt,
   running,
+  onBrowseAcd,
 }: {
   entry: Entry;
   spreadsheet: SpreadsheetProtosDto | null;
   onAttempt: () => void;
   running: boolean;
+  onBrowseAcd?: (prefix: string) => void;
 }) {
   return (
     <div className="px-4 py-4 space-y-4">
@@ -456,12 +471,18 @@ function MissView({
           )}
         </Button>
       </div>
-      <BrowseAcdLink entry={entry} />
+      <BrowseAcdLink entry={entry} onBrowseAcd={onBrowseAcd} />
     </div>
   );
 }
 
-function BrowseAcdLink({ entry }: { entry: Entry }) {
+function BrowseAcdLink({
+  entry,
+  onBrowseAcd,
+}: {
+  entry: Entry;
+  onBrowseAcd?: (prefix: string) => void;
+}) {
   // Default the dictionary to the 2-letter prefix matching the entry's
   // first two ASCII letters (e.g. "Babuy" -> "ba"). Falls back gracefully
   // when the entry text doesn't have two ASCII letters.
@@ -471,6 +492,23 @@ function BrowseAcdLink({ entry }: { entry: Entry }) {
   const a = c0 >= "a" && c0 <= "z" ? c0 : "a";
   const b = c1 >= "a" && c1 <= "z" ? c1 : "a";
   const prefix = `${a}${b}`;
+  // When the parent provided a drawer-opener callback, prefer that.
+  // Otherwise fall back to a full navigation to /dictionary so the panel
+  // stays usable outside the /review context.
+  if (onBrowseAcd) {
+    return (
+      <div className="pt-2 text-center">
+        <button
+          type="button"
+          onClick={() => onBrowseAcd(prefix)}
+          className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground underline-offset-2 hover:underline"
+        >
+          <BookOpen className="h-3 w-3" />
+          Nothing matches? Browse the full ACD →
+        </button>
+      </div>
+    );
+  }
   return (
     <div className="pt-2 text-center">
       <Link
@@ -537,6 +575,7 @@ function DoneView({
   onSetPrimary,
   onRemoveManualPick,
   onNotesChange,
+  onBrowseAcd,
   onRerun,
   rerunning,
 }: {
@@ -547,6 +586,7 @@ function DoneView({
   onSetPrimary: (pidno: number) => void;
   onRemoveManualPick: (pidno: number) => void;
   onNotesChange: (s: string) => void;
+  onBrowseAcd?: (prefix: string) => void;
   onRerun: () => void;
   rerunning: boolean;
 }) {
@@ -665,12 +705,17 @@ function DoneView({
           className="w-full text-sm rounded border border-input bg-background px-3 py-2 font-mono placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
         />
       </div>
-      {data.entry && <BrowseAcdLink entry={{
-        id: data.entry.id,
-        text: data.entry.text,
-        glossRaw: data.entry.glossRaw,
-        state: data.entry.state,
-      }} />}
+      {data.entry && (
+        <BrowseAcdLink
+          entry={{
+            id: data.entry.id,
+            text: data.entry.text,
+            glossRaw: data.entry.glossRaw,
+            state: data.entry.state,
+          }}
+          onBrowseAcd={onBrowseAcd}
+        />
+      )}
     </div>
   );
 }

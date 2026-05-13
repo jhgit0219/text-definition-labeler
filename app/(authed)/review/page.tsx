@@ -40,6 +40,7 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { ReconstructionPanel } from "@/components/recon/ReconstructionPanel";
+import { DictionaryView } from "@/components/dictionary/DictionaryView";
 
 type EntryState = "pending" | "accepted" | "rejected" | "no_ouv";
 
@@ -128,6 +129,14 @@ function ReviewPage() {
   // Set when ?entry_id=N is in the URL — the load sequence is two-step
   // (lookup entry -> set currentPage -> wait for entries -> setActiveId).
   const [pendingFocusId, setPendingFocusId] = useState<number | null>(null);
+  // ACD-browse drawer state. When `dictionaryDrawer` is non-null, the
+  // DictionaryView mounts as a full-height overlay on top of the
+  // review layout. Bumping reconReloadKey forces the recon panel to
+  // refetch picks/data after a pick lands inside the drawer.
+  const [dictionaryDrawer, setDictionaryDrawer] = useState<
+    { entryId: number; prefix: string } | null
+  >(null);
+  const [reconReloadKey, setReconReloadKey] = useState(0);
   // Imperative handle on the zoom-pan wrapper so toolbar buttons can drive it.
   const zoomRef = useRef<ReactZoomPanPinchRef | null>(null);
 
@@ -743,9 +752,71 @@ function ReviewPage() {
                 }
               : null
           }
+          reloadKey={reconReloadKey}
+          onBrowseAcd={
+            active
+              ? (prefix) =>
+                  setDictionaryDrawer({ entryId: active.id, prefix })
+              : undefined
+          }
         />
       </ResizablePanel>
+      {dictionaryDrawer !== null && (
+        <DictionaryDrawer
+          entryId={dictionaryDrawer.entryId}
+          prefix={dictionaryDrawer.prefix}
+          onClose={() => {
+            setDictionaryDrawer(null);
+            // Force the recon panel to refetch so any picks added in
+            // the drawer become visible in the candidate list / manual
+            // picks section without a manual refresh.
+            setReconReloadKey((k) => k + 1);
+          }}
+          onPickChanged={() => setReconReloadKey((k) => k + 1)}
+        />
+      )}
     </ResizablePanelGroup>
+  );
+}
+
+function DictionaryDrawer({
+  entryId,
+  prefix,
+  onClose,
+  onPickChanged,
+}: {
+  entryId: number;
+  prefix: string;
+  onClose: () => void;
+  onPickChanged: () => void;
+}) {
+  // Esc closes the drawer — keyboard escape hatch matching the X button.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex" role="dialog" aria-modal="true">
+      <button
+        type="button"
+        aria-label="close dictionary"
+        onClick={onClose}
+        className="flex-1 bg-black/40 backdrop-blur-[1px] cursor-default"
+      />
+      <div className="w-[min(96vw,72rem)] bg-background shadow-2xl flex flex-col">
+        <DictionaryView
+          entryId={entryId}
+          initialPrefix={prefix}
+          closeLabel="close"
+          onClose={onClose}
+          onPickChanged={onPickChanged}
+        />
+      </div>
+    </div>
   );
 }
 
