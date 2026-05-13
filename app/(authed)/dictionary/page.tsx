@@ -317,8 +317,12 @@ function DictionaryPage() {
           )}
         </div>
 
-        {/* Prefix nav — grouped by letter, 2-letter sub-prefixes as chips */}
-        <nav className="px-6 pb-3 space-y-1">
+        {/* Prefix nav — one row per letter, with 2-letter sub-prefix chips
+            inside. Each chip is min-width-fixed so they form a clean grid
+            instead of a ragged wall of variable-width buttons. The nav is
+            capped at 40vh and scrolls internally so the results below
+            stay visible without a huge initial scroll. */}
+        <nav className="px-6 pb-3 space-y-1.5 max-h-[40vh] overflow-y-auto">
           {Array.from(prefixByLetter.keys())
             .sort()
             .map((letter) => {
@@ -326,12 +330,12 @@ function DictionaryPage() {
               return (
                 <div
                   key={letter}
-                  className="flex items-baseline gap-2 leading-tight"
+                  className="flex items-center gap-3"
                 >
-                  <span className="font-mono uppercase text-xs text-muted-foreground w-4 flex-shrink-0">
+                  <span className="font-mono uppercase text-sm font-bold text-foreground w-6 flex-shrink-0 text-center">
                     {letter}
                   </span>
-                  <div className="flex flex-wrap gap-1">
+                  <div className="flex flex-wrap gap-1.5">
                     {chips.map((c) => {
                       const active = c.prefix === prefixParam;
                       return (
@@ -339,20 +343,22 @@ function DictionaryPage() {
                           key={c.prefix}
                           onClick={() => goToPrefix(c.prefix)}
                           className={cn(
-                            "px-1.5 py-0.5 text-xs font-mono rounded transition-colors inline-flex items-baseline gap-1",
+                            "inline-flex items-baseline justify-center gap-1.5",
+                            "min-w-[3.75rem] px-2.5 py-1",
+                            "text-sm font-mono rounded-md border transition-colors",
                             active
-                              ? "bg-foreground text-background"
-                              : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                              ? "bg-foreground text-background border-foreground"
+                              : "border-transparent text-muted-foreground hover:border-border hover:bg-muted hover:text-foreground",
                           )}
-                          title={`${c.count} reconstructions`}
+                          title={`${c.count} reconstructions starting with ${c.prefix}`}
                         >
-                          <span>{c.prefix}</span>
+                          <span className="font-medium">{c.prefix}</span>
                           <span
                             className={cn(
                               "text-[10px] tabular-nums",
                               active
-                                ? "text-background/70"
-                                : "text-muted-foreground/70",
+                                ? "text-background/60"
+                                : "text-muted-foreground/60",
                             )}
                           >
                             {c.count}
