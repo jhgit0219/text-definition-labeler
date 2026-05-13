@@ -2,7 +2,16 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Star, Sparkles, RefreshCw, AlertCircle, Loader2, BookOpen } from "lucide-react";
+import {
+  AlertCircle,
+  BookOpen,
+  ChevronDown,
+  ChevronRight,
+  Loader2,
+  RefreshCw,
+  Sparkles,
+  Star,
+} from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -678,6 +687,20 @@ function CandidateRow({
           subgroupCode: "",
         }));
   const reflexGroups = groupBySubgroup(reflexesToRender);
+  // Per-subgroup collapse state. Sections default to expanded (the
+  // empty Set means "nothing collapsed"); the user can fold any branch
+  // they're not interested in. State persists across show/hide cycles
+  // for this candidate, but resets when a new entry loads (the parent
+  // re-renders the candidate list).
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  function toggleGroup(code: string) {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) next.delete(code);
+      else next.add(code);
+      return next;
+    });
+  }
   return (
     <li
       className={cn(
@@ -744,8 +767,13 @@ function CandidateRow({
             <button
               type="button"
               onClick={toggleReflexes}
-              className="mt-1 text-[10px] uppercase tracking-wide text-muted-foreground hover:text-foreground"
+              className="mt-1.5 text-xs uppercase tracking-wide text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
             >
+              {showReflexes ? (
+                <ChevronDown className="h-3 w-3" />
+              ) : (
+                <ChevronRight className="h-3 w-3" />
+              )}
               {showReflexes ? "hide" : "show"} {totalCount} reflex
               {totalCount === 1 ? "" : "es"}
             </button>
@@ -757,31 +785,47 @@ function CandidateRow({
             </div>
           )}
           {showReflexes && !reflexLoading && (
-            <div className="mt-1 space-y-2">
-              {reflexGroups.map((g) => (
-                <section key={g.code}>
-                  <h5 className="text-[9px] uppercase tracking-wide font-semibold text-muted-foreground">
-                    {g.label}{" "}
-                    <span className="tabular-nums font-normal">
-                      ({g.reflexes.length})
-                    </span>
-                  </h5>
-                  <ul className="space-y-0.5">
-                    {g.reflexes.map((r, idx) => (
-                      <li
-                        key={idx}
-                        className="text-[11px] text-muted-foreground flex gap-2"
-                      >
-                        <span className="w-24 flex-shrink-0">{r.language}</span>
-                        <span className="font-mono text-foreground">
-                          {r.form}
-                        </span>
-                        <span className="italic">‘{r.gloss_text}’</span>
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              ))}
+            <div className="mt-2 space-y-2.5">
+              {reflexGroups.map((g) => {
+                const collapsed = collapsedGroups.has(g.code);
+                return (
+                  <section key={g.code}>
+                    <button
+                      type="button"
+                      onClick={() => toggleGroup(g.code)}
+                      className="w-full flex items-center gap-1 text-xs uppercase tracking-wide font-semibold text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      {collapsed ? (
+                        <ChevronRight className="h-3 w-3 flex-shrink-0" />
+                      ) : (
+                        <ChevronDown className="h-3 w-3 flex-shrink-0" />
+                      )}
+                      <span>{g.label}</span>
+                      <span className="tabular-nums font-normal opacity-70">
+                        ({g.reflexes.length})
+                      </span>
+                    </button>
+                    {!collapsed && (
+                      <ul className="mt-1 space-y-1 pl-4">
+                        {g.reflexes.map((r, idx) => (
+                          <li
+                            key={idx}
+                            className="text-xs text-muted-foreground flex gap-2 leading-snug"
+                          >
+                            <span className="w-24 flex-shrink-0 whitespace-nowrap">
+                              {r.language}
+                            </span>
+                            <span className="font-mono text-foreground whitespace-nowrap">
+                              {r.form}
+                            </span>
+                            <span className="italic">‘{r.gloss_text}’</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </section>
+                );
+              })}
             </div>
           )}
         </div>

@@ -12,6 +12,8 @@ import {
 import {
   ArrowLeft,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   Loader2,
   Plus,
   Search,
@@ -445,6 +447,19 @@ function AcdRowItem({
   const [expanded, setExpanded] = useState(false);
   const [reflexLoading, setReflexLoading] = useState(false);
 
+  // Per-subgroup collapse state. Defaults to "nothing collapsed" so
+  // the first time the user expands the card every branch is visible.
+  // State persists across show/hide cycles within this row's lifetime.
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  function toggleGroup(code: string) {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) next.delete(code);
+      else next.add(code);
+      return next;
+    });
+  }
+
   async function toggleExpand() {
     if (expanded) {
       setExpanded(false);
@@ -492,56 +507,75 @@ function AcdRowItem({
           <button
             type="button"
             onClick={toggleExpand}
-            className="mt-1 text-[11px] uppercase tracking-wide text-muted-foreground hover:text-foreground"
+            className="mt-1.5 text-xs uppercase tracking-wide text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
           >
+            {expanded ? (
+              <ChevronDown className="h-3 w-3" />
+            ) : (
+              <ChevronRight className="h-3 w-3" />
+            )}
             {expanded ? "hide" : "show"}{" "}
             <span className="tabular-nums">{row.reflexCount}</span>{" "}
             reflex{row.reflexCount === 1 ? "" : "es"}
           </button>
           {expanded && (
-            <div className="mt-1.5 pl-3 border-l-2 border-border">
+            <div className="mt-2 pl-3 border-l-2 border-border">
               {reflexLoading && (
-                <div className="py-1 flex items-center gap-2 text-xs text-muted-foreground">
+                <div className="py-1 flex items-center gap-2 text-sm text-muted-foreground">
                   <Loader2 className="h-3.5 w-3.5 animate-spin" /> loading reflexes…
                 </div>
               )}
               {reflexes !== null && reflexes.length === 0 && (
-                <p className="text-xs italic text-muted-foreground py-1">
+                <p className="text-sm italic text-muted-foreground py-1">
                   (no reflexes recorded)
                 </p>
               )}
               {reflexes && reflexes.length > 0 && (
                 <div className="mt-1 space-y-3">
-                  {groupBySubgroup(reflexes).map((group) => (
-                    <section key={group.code}>
-                      <h4 className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground mb-1">
-                        {group.label}{" "}
-                        <span className="tabular-nums font-normal">
-                          ({group.reflexes.length})
-                        </span>
-                      </h4>
-                      <table className="text-xs w-full">
-                        <tbody>
-                          {group.reflexes.map((rx) => (
-                            <tr
-                              key={rx.id}
-                              className="align-top leading-snug"
-                            >
-                              <td className="w-32 pr-3 text-muted-foreground whitespace-nowrap">
-                                {rx.languageName}
-                              </td>
-                              <td className="w-28 pr-3 font-mono text-foreground whitespace-nowrap">
-                                {rx.form}
-                              </td>
-                              <td className="italic text-muted-foreground">
-                                ‘{rx.glossText}’
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </section>
-                  ))}
+                  {groupBySubgroup(reflexes).map((group) => {
+                    const collapsed = collapsedGroups.has(group.code);
+                    return (
+                      <section key={group.code}>
+                        <button
+                          type="button"
+                          onClick={() => toggleGroup(group.code)}
+                          className="w-full flex items-center gap-1 text-xs uppercase tracking-wide font-semibold text-muted-foreground hover:text-foreground transition-colors mb-1"
+                        >
+                          {collapsed ? (
+                            <ChevronRight className="h-3 w-3 flex-shrink-0" />
+                          ) : (
+                            <ChevronDown className="h-3 w-3 flex-shrink-0" />
+                          )}
+                          <span>{group.label}</span>
+                          <span className="tabular-nums font-normal opacity-70">
+                            ({group.reflexes.length})
+                          </span>
+                        </button>
+                        {!collapsed && (
+                          <table className="text-sm w-full">
+                            <tbody>
+                              {group.reflexes.map((rx) => (
+                                <tr
+                                  key={rx.id}
+                                  className="align-top leading-snug"
+                                >
+                                  <td className="w-36 pr-3 text-muted-foreground whitespace-nowrap py-0.5">
+                                    {rx.languageName}
+                                  </td>
+                                  <td className="w-32 pr-3 font-mono text-foreground whitespace-nowrap py-0.5">
+                                    {rx.form}
+                                  </td>
+                                  <td className="italic text-muted-foreground py-0.5">
+                                    ‘{rx.glossText}’
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                      </section>
+                    );
+                  })}
                 </div>
               )}
             </div>
