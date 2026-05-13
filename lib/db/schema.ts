@@ -100,6 +100,15 @@ export const reconstructions = pgTable(
     rankings: jsonb("rankings").notNull(),
     status: varchar("status", { length: 16 }).notNull().default("done"),
     errorMsg: text("error_msg"),
+    /**
+     * Snapshot of the originating entry's `state` at the moment this
+     * reconstruction was first computed. NULL means "computed via the
+     * direct labeler API path (state-agnostic) or backfilled before this
+     * column existed". When non-null and != 'accepted', the panel surfaces
+     * a banner telling the annotator that the ranking was generated
+     * before the text-gloss pair was validated.
+     */
+    computedAgainstState: varchar("computed_against_state", { length: 16 }),
     computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({

@@ -84,6 +84,15 @@ interface ReconResponseDto {
      * ranking was originally computed against a different gloss spelling.
      */
     looseMatch: boolean;
+    /**
+     * State of the originating entry at the time this reconstruction was
+     * computed (e.g. 'pending', 'accepted'). Null for older rows that
+     * predate this column. When non-null and != 'accepted', the panel
+     * surfaces a banner — the ranking was generated before the entry
+     * was validated, so the annotator may want to confirm the text/gloss
+     * is what they intend before committing picks.
+     */
+    computedAgainstState: string | null;
   } | null;
   picks: {
     id: number;
@@ -158,6 +167,7 @@ function toDto(
           errorMsg: row.errorMsg,
           computedAt: row.computedAt.toISOString(),
           looseMatch,
+          computedAgainstState: row.computedAgainstState ?? null,
         }
       : null,
     picks: picks.map((p) => {

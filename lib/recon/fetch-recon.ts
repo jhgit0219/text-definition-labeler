@@ -64,6 +64,13 @@ export interface ReconstructionRowDto {
    * slightly different gloss spelling.
    */
   looseMatch?: boolean;
+  /**
+   * State of the originating entry when the reconstruction was computed.
+   * When non-null and != 'accepted', the panel renders a banner: the
+   * ranking was generated pre-validation and the annotator should
+   * sanity-check the text/gloss before committing picks.
+   */
+  computedAgainstState?: string | null;
 }
 
 export interface SpreadsheetProtosDto {

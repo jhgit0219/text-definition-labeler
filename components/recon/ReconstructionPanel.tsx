@@ -719,10 +719,26 @@ function DoneView({
       });
   }, [draftPicks, aiPidnos, data.picks]);
 
+  const preAcceptState =
+    recon.computedAgainstState &&
+    recon.computedAgainstState !== "accepted"
+      ? recon.computedAgainstState
+      : null;
+
   return (
     <div className="px-4 py-4 space-y-4">
       {data.spreadsheetProtos && (
         <SpreadsheetReferenceCard data={data.spreadsheetProtos} />
+      )}
+      {preAcceptState && (
+        <div className="rounded-md border border-amber-200 bg-amber-50/60 px-3 py-2 text-left">
+          <p className="text-[11px] text-amber-900 leading-snug">
+            <span className="font-semibold">Pre-acceptance ranking.</span>{" "}
+            This reconstruction was generated when the entry was{" "}
+            <span className="font-mono">{preAcceptState}</span>. The text /
+            gloss may have changed since — confirm before committing picks.
+          </p>
+        </div>
       )}
       <div className="flex items-center justify-between gap-2">
         <div className="text-[11px] text-muted-foreground flex items-center gap-2 flex-wrap">

@@ -1,0 +1,1 @@
+ALTER TABLE "reconstructions" ADD COLUMN "computed_against_state" varchar(16);
