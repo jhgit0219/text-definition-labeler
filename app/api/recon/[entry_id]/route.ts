@@ -91,6 +91,18 @@ interface ReconResponseDto {
     protoForm: string;
     isPrimary: boolean;
     source: "ai" | "manual";
+    /**
+     * Enrichment fields populated for manual picks (those that came in
+     * via the /dictionary append path and aren't in the AI rankings).
+     * The panel uses these to render a card with proto-code, gloss and
+     * reflex count rather than just a bare proto-form. AI picks leave
+     * these null because the same data already lives in
+     * reconstruction.rankings[N].
+     */
+    protoCode: string | null;
+    glossText: string | null;
+    setNum: number | null;
+    reflexCount: number | null;
   }[];
   entryNotes: string | null;
   spreadsheetProtos: SpreadsheetProtos | null;
@@ -115,6 +127,10 @@ function toDto(
   entryNotes: string | null,
   spreadsheetProtos: SpreadsheetProtos | null,
   reflexCountByPidno: Map<number, number>,
+  manualPickMeta: Map<
+    number,
+    { protoCode: string; glossText: string; setNum: number }
+  >,
   looseMatch = false,
 ): ReconResponseDto {
   return {
@@ -144,13 +160,23 @@ function toDto(
           looseMatch,
         }
       : null,
-    picks: picks.map((p) => ({
-      id: p.id,
-      pidno: p.pidno,
-      protoForm: p.protoForm,
-      isPrimary: p.isPrimary,
-      source: (p.source === "manual" ? "manual" : "ai") as "ai" | "manual",
-    })),
+    picks: picks.map((p) => {
+      const source = (p.source === "manual" ? "manual" : "ai") as "ai" | "manual";
+      const meta = source === "manual" ? manualPickMeta.get(p.pidno) : null;
+      return {
+        id: p.id,
+        pidno: p.pidno,
+        protoForm: p.protoForm,
+        isPrimary: p.isPrimary,
+        source,
+        protoCode: meta?.protoCode ?? null,
+        glossText: meta?.glossText ?? null,
+        setNum: meta?.setNum ?? null,
+        reflexCount: source === "manual"
+          ? reflexCountByPidno.get(p.pidno) ?? 0
+          : null,
+      };
+    }),
     entryNotes,
     spreadsheetProtos,
   };
@@ -251,6 +277,25 @@ async function loadPicks(entryId: number): Promise<PickRow[]> {
     .where(eq(schema.entryReconstructionPicks.entryId, entryId));
 }
 
+/**
+ * Look up acd_reconstructions metadata (proto_code, gloss, set_num) for
+ * a list of pidnos — used to enrich manual picks so the panel can show
+ * them as full cards rather than bare proto-form chips.
+ */
+async function loadAcdMeta(pidnos: number[]) {
+  if (pidnos.length === 0) return new Map<number, { protoCode: string; glossText: string; setNum: number }>();
+  const rows = await db
+    .select({
+      pidno: schema.acdReconstructions.pidno,
+      protoCode: schema.acdReconstructions.protoCode,
+      glossText: schema.acdReconstructions.glossText,
+      setNum: schema.acdReconstructions.setNum,
+    })
+    .from(schema.acdReconstructions)
+    .where(inArray(schema.acdReconstructions.pidno, pidnos));
+  return new Map(rows.map((r) => [r.pidno, r]));
+}
+
 export async function GET(
   _req: NextRequest,
   { params }: { params: { entry_id: string } },
@@ -267,7 +312,21 @@ export async function GET(
   const gloss = normalizeGloss(entry.glossRaw);
   const { row: recon, looseMatch } = await loadReconstructionWithFallback(text, gloss);
   const picks = await loadPicks(entryId);
-  const reflexCounts = await loadReflexCounts(pidnosFromRow(recon));
+  // Reflex counts cover BOTH AI candidates (from rankings) and manual
+  // picks (from picks) so the panel can render true counts uniformly.
+  const reflexCountTargets = Array.from(
+    new Set<number>([
+      ...pidnosFromRow(recon),
+      ...picks.map((p) => p.pidno),
+    ]),
+  );
+  const reflexCounts = await loadReflexCounts(reflexCountTargets);
+  // Enrichment for manual picks: pull proto_code / gloss / set_num from
+  // acd_reconstructions so the panel can render them as full cards.
+  const manualPidnos = picks
+    .filter((p) => p.source === "manual")
+    .map((p) => p.pidno);
+  const manualPickMeta = await loadAcdMeta(manualPidnos);
   return NextResponse.json(
     toDto(
       entry,
@@ -276,6 +335,7 @@ export async function GET(
       entry.notes,
       entry.spreadsheetProtos as SpreadsheetProtos | null,
       reflexCounts,
+      manualPickMeta,
       looseMatch,
     ),
   );
@@ -430,7 +490,17 @@ export async function POST(
 
   const saved = row ?? (await loadReconstructionStrict(text, gloss));
   const picks = await loadPicks(entryId);
-  const reflexCounts = await loadReflexCounts(pidnosFromRow(saved));
+  const reflexCountTargets = Array.from(
+    new Set<number>([
+      ...pidnosFromRow(saved),
+      ...picks.map((p) => p.pidno),
+    ]),
+  );
+  const reflexCounts = await loadReflexCounts(reflexCountTargets);
+  const manualPidnos = picks
+    .filter((p) => p.source === "manual")
+    .map((p) => p.pidno);
+  const manualPickMeta = await loadAcdMeta(manualPidnos);
   return NextResponse.json(
     toDto(
       entry,
@@ -439,6 +509,7 @@ export async function POST(
       entry.notes,
       entry.spreadsheetProtos as SpreadsheetProtos | null,
       reflexCounts,
+      manualPickMeta,
     ),
     { status: force ? 200 : 201 },
   );

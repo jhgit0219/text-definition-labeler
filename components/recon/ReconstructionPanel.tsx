@@ -607,9 +607,9 @@ function DoneView({
     [rankings],
   );
   const manualOrphanPicks = useMemo(() => {
-    // Find each manual pick's protoForm from the original data.picks
-    // (we don't carry protoForm in PickInput because the AI rankings
-    // already have it; for orphans we need the denormalized value).
+    // Find each manual pick's enrichment from the original data.picks —
+    // the GET endpoint joins acd_reconstructions for source='manual'
+    // rows so proto_code, gloss, set_num and reflex_count come along.
     const byPidno = new Map(data.picks.map((p) => [p.pidno, p]));
     return draftPicks
       .filter((p) => p.source === "manual" && !aiPidnos.has(p.pidno))
@@ -619,6 +619,10 @@ function DoneView({
           pidno: p.pidno,
           isPrimary: p.isPrimary,
           protoForm: original?.protoForm ?? `pidno ${p.pidno}`,
+          protoCode: original?.protoCode ?? null,
+          glossText: original?.glossText ?? null,
+          setNum: original?.setNum ?? null,
+          reflexCount: original?.reflexCount ?? null,
         };
       });
   }, [draftPicks, aiPidnos, data.picks]);
@@ -671,6 +675,10 @@ function DoneView({
                 key={p.pidno}
                 pidno={p.pidno}
                 protoForm={p.protoForm}
+                protoCode={p.protoCode}
+                glossText={p.glossText}
+                setNum={p.setNum}
+                reflexCount={p.reflexCount}
                 isPrimary={p.isPrimary}
                 onRemove={() => onRemoveManualPick(p.pidno)}
                 onSetPrimary={() => onSetPrimary(p.pidno)}
@@ -729,53 +737,202 @@ interface FullReflex {
 
 /**
  * A pick from the /dictionary browse path whose pidno isn't in the AI's
- * candidate list. Rendered as its own minimal card with proto-form,
- * primary toggle, and remove button — distinct visual from the
- * AI-candidate rows so the annotator can tell at a glance which picks
- * came from where.
+ * candidate list. Rendered as its own card paralleling CandidateRow so
+ * the annotator sees the same details (proto-code, gloss, reflexes)
+ * for a manual pick that they see for an AI pick. Distinguishing
+ * details: no rationale, an X remove button, and a slightly different
+ * border tint so the source is still recognizable at a glance.
  */
 function ManualPickRow({
   pidno,
   protoForm,
+  protoCode,
+  glossText,
+  setNum,
+  reflexCount,
   isPrimary,
   onRemove,
   onSetPrimary,
 }: {
   pidno: number;
   protoForm: string;
+  protoCode: string | null;
+  glossText: string | null;
+  setNum: number | null;
+  reflexCount: number | null;
   isPrimary: boolean;
   onRemove: () => void;
   onSetPrimary: () => void;
 }) {
+  const [showReflexes, setShowReflexes] = useState(false);
+  const [fullReflexes, setFullReflexes] = useState<FullReflex[] | null>(null);
+  const [reflexLoading, setReflexLoading] = useState(false);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+
+  function toggleGroup(code: string) {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) next.delete(code);
+      else next.add(code);
+      return next;
+    });
+  }
+
+  async function toggleReflexes() {
+    if (showReflexes) {
+      setShowReflexes(false);
+      return;
+    }
+    setShowReflexes(true);
+    if (fullReflexes === null && !reflexLoading && (reflexCount ?? 0) > 0) {
+      setReflexLoading(true);
+      try {
+        const res = await fetch(`/api/acd/reconstruction/${pidno}`);
+        if (res.ok) {
+          const body = await res.json();
+          setFullReflexes(
+            (body.reflexes ?? []).map(
+              (r: {
+                languageName: string;
+                form: string;
+                glossText: string;
+                subgroupCode?: string;
+              }) => ({
+                language: r.languageName,
+                form: r.form,
+                gloss_text: r.glossText,
+                subgroupCode: r.subgroupCode ?? "",
+              }),
+            ),
+          );
+        }
+      } finally {
+        setReflexLoading(false);
+      }
+    }
+  }
+
+  const reflexGroups = fullReflexes
+    ? groupBySubgroup(fullReflexes)
+    : [];
+
   return (
-    <li className="border border-emerald-300 bg-emerald-50/40 rounded p-2 flex items-center gap-2">
-      <button
-        type="button"
-        onClick={onSetPrimary}
-        aria-label={`mark ${protoForm} as primary`}
-        className={cn(
-          "p-0.5 rounded-sm cursor-pointer transition-colors flex-shrink-0",
-          isPrimary
-            ? "text-amber-500 hover:text-amber-600"
-            : "text-stone-300 hover:text-amber-400",
-        )}
-      >
-        <Star className={cn("h-4 w-4", isPrimary && "fill-amber-400")} />
-      </button>
-      <span className="font-mono font-medium text-sm flex-1 min-w-0 truncate">
-        {protoForm}
-      </span>
-      <span className="text-[11px] text-muted-foreground tabular-nums flex-shrink-0">
-        pidno {pidno}
-      </span>
-      <button
-        type="button"
-        onClick={onRemove}
-        aria-label={`remove ${protoForm}`}
-        className="p-0.5 rounded-sm text-muted-foreground hover:text-rose-600 transition-colors flex-shrink-0"
-      >
-        <X className="h-3.5 w-3.5" />
-      </button>
+    <li className="border border-emerald-300 bg-emerald-50/30 rounded p-2.5 transition-colors">
+      <div className="flex items-start gap-2">
+        <button
+          type="button"
+          onClick={onSetPrimary}
+          aria-label={`mark ${protoForm} as primary`}
+          className={cn(
+            "mt-0.5 p-0.5 rounded-sm cursor-pointer transition-colors flex-shrink-0",
+            isPrimary
+              ? "text-amber-500 hover:text-amber-600"
+              : "text-stone-300 hover:text-amber-400",
+          )}
+        >
+          <Star className={cn("h-4 w-4", isPrimary && "fill-amber-400")} />
+        </button>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-mono font-medium text-sm">{protoForm}</span>
+            {protoCode && (
+              <span className="text-[11px] text-muted-foreground">
+                {protoCode}
+              </span>
+            )}
+            {setNum !== null && (
+              <span className="text-[11px] text-muted-foreground tabular-nums">
+                set #{setNum}
+              </span>
+            )}
+            <span className="text-[11px] text-muted-foreground tabular-nums">
+              pidno {pidno}
+            </span>
+          </div>
+          {glossText && (
+            <p className="mt-0.5 text-[11px] italic text-muted-foreground">
+              ‘{glossText}’
+            </p>
+          )}
+          {(reflexCount ?? 0) > 0 && (
+            <button
+              type="button"
+              onClick={toggleReflexes}
+              className="mt-1.5 text-xs uppercase tracking-wide text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
+            >
+              {showReflexes ? (
+                <ChevronDown className="h-3 w-3" />
+              ) : (
+                <ChevronRight className="h-3 w-3" />
+              )}
+              {showReflexes ? "hide" : "show"} {reflexCount} reflex
+              {reflexCount === 1 ? "" : "es"}
+            </button>
+          )}
+          {showReflexes && reflexLoading && (
+            <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              loading reflexes…
+            </div>
+          )}
+          {showReflexes && !reflexLoading && reflexGroups.length > 0 && (
+            <div className="mt-2 space-y-2.5">
+              {reflexGroups.map((g) => {
+                const collapsed = collapsedGroups.has(g.code);
+                return (
+                  <section key={g.code}>
+                    <button
+                      type="button"
+                      onClick={() => toggleGroup(g.code)}
+                      className="w-full flex items-center gap-1 text-xs uppercase tracking-wide font-semibold text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      {collapsed ? (
+                        <ChevronRight className="h-3 w-3 flex-shrink-0" />
+                      ) : (
+                        <ChevronDown className="h-3 w-3 flex-shrink-0" />
+                      )}
+                      <span>{g.label}</span>
+                      <span className="tabular-nums font-normal opacity-70">
+                        ({g.reflexes.length})
+                      </span>
+                    </button>
+                    {!collapsed && (
+                      <ul className="mt-1 space-y-1 pl-4">
+                        {g.reflexes.map((r, idx) => (
+                          <li
+                            key={idx}
+                            className="text-xs text-muted-foreground grid gap-2 leading-snug"
+                            style={{
+                              gridTemplateColumns:
+                                "minmax(0, 7rem) minmax(0, 5rem) minmax(0, 1fr)",
+                            }}
+                          >
+                            <span className="break-words">{r.language}</span>
+                            <span className="font-mono text-foreground break-words">
+                              {r.form}
+                            </span>
+                            <span className="italic break-words">
+                              ‘{r.gloss_text}’
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </section>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={onRemove}
+          aria-label={`remove ${protoForm}`}
+          className="mt-0.5 p-0.5 rounded-sm text-muted-foreground hover:text-rose-600 transition-colors flex-shrink-0"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
     </li>
   );
 }

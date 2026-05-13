@@ -27,6 +27,15 @@ export interface ReconstructionPickDto {
    * no matching AI candidate row.
    */
   source: "ai" | "manual";
+  /**
+   * Enrichment fields populated only for `source: 'manual'` picks.
+   * AI picks leave these null because the same data is already in the
+   * embedded rankings list.
+   */
+  protoCode: string | null;
+  glossText: string | null;
+  setNum: number | null;
+  reflexCount: number | null;
 }
 
 /**
