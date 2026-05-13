@@ -49,6 +49,14 @@ interface PrefixResponse {
   rows: AcdRow[];
 }
 
+interface SearchResponse {
+  query: string;
+  totalRows: number;
+  truncated: boolean;
+  protoCodesInResults: string[];
+  rows: AcdRow[];
+}
+
 interface AcdReflex {
   id: number;
   subgroupCode: string;
@@ -106,6 +114,14 @@ function DictionaryPage() {
   // recon panel), so showing only that letter's row keeps the header
   // small. Toggle expands to all letters.
   const [navExpanded, setNavExpanded] = useState(false);
+  // Search scope: 'prefix' (default) filters the currently-loaded prefix's
+  // rows client-side; 'global' fires /api/acd/search across the full
+  // corpus. Toggle sits next to the search input.
+  const [searchScope, setSearchScope] = useState<"prefix" | "global">(
+    "prefix",
+  );
+  const [globalSearch, setGlobalSearch] = useState<SearchResponse | null>(null);
+  const [globalSearchLoading, setGlobalSearchLoading] = useState(false);
 
   // One-shot fetch of the prefix histogram.
   useEffect(() => {
@@ -138,6 +154,34 @@ function DictionaryPage() {
       .catch((err) => setError(err instanceof Error ? err.message : String(err)))
       .finally(() => setLoading(false));
   }, [prefixParam, layersParam]);
+
+  // Global search: when scope is 'global' and the query has >=2 chars,
+  // fire the server endpoint with debouncing. Otherwise clear.
+  useEffect(() => {
+    if (searchScope !== "global") {
+      setGlobalSearch(null);
+      setGlobalSearchLoading(false);
+      return;
+    }
+    const trimmed = query.trim();
+    if (trimmed.length < 2) {
+      setGlobalSearch(null);
+      setGlobalSearchLoading(false);
+      return;
+    }
+    setGlobalSearchLoading(true);
+    const handle = setTimeout(() => {
+      const params = new URLSearchParams();
+      params.set("q", trimmed);
+      if (layersParam) params.set("layers", layersParam);
+      fetch(`/api/acd/search?${params.toString()}`)
+        .then((r) => r.json())
+        .then((d: SearchResponse) => setGlobalSearch(d))
+        .catch(() => setGlobalSearch(null))
+        .finally(() => setGlobalSearchLoading(false));
+    }, 250);
+    return () => clearTimeout(handle);
+  }, [query, searchScope, layersParam]);
 
   // Fetch entry context + existing picks.
   useEffect(() => {
@@ -229,9 +273,14 @@ function DictionaryPage() {
     [entryId],
   );
 
-  // Client-side search: filter the loaded rows by case-insensitive
-  // substring match against form, form_plain, gloss, or proto_code.
+  // Client-side search (scope=prefix): filter the loaded prefix's rows
+  // by case-insensitive substring match against form, form_plain,
+  // gloss, or proto_code. When scope=global the rows come from
+  // globalSearch state instead.
   const filteredRows = useMemo(() => {
+    if (searchScope === "global") {
+      return globalSearch?.rows ?? [];
+    }
     if (!data) return [];
     const q = query.trim().toLowerCase();
     if (!q) return data.rows;
@@ -243,7 +292,7 @@ function DictionaryPage() {
         r.protoCode.toLowerCase().includes(q)
       );
     });
-  }, [data, query]);
+  }, [data, query, searchScope, globalSearch]);
 
   return (
     <div className="h-screen flex flex-col bg-background">
@@ -283,16 +332,56 @@ function DictionaryPage() {
               type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="search this prefix (form / gloss / proto-code)…"
+              placeholder={
+                searchScope === "global"
+                  ? "search ALL prefixes (form / gloss / proto-code)…"
+                  : "search this prefix (form / gloss / proto-code)…"
+              }
               className="w-full text-sm rounded border border-input bg-background py-1.5 pl-8 pr-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </div>
-          {data && data.protoCodesInPrefix.length > 0 && (
+          {/* Scope toggle — flips between filtering the loaded prefix
+              (default) and searching the whole 12K-row ACD corpus. */}
+          <div className="inline-flex rounded-md border border-border text-xs overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setSearchScope("prefix")}
+              className={cn(
+                "px-2.5 py-1 transition-colors",
+                searchScope === "prefix"
+                  ? "bg-foreground text-background"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
+              )}
+              title="Filter the rows currently loaded for the selected prefix"
+            >
+              in prefix
+            </button>
+            <button
+              type="button"
+              onClick={() => setSearchScope("global")}
+              className={cn(
+                "px-2.5 py-1 transition-colors border-l border-border",
+                searchScope === "global"
+                  ? "bg-foreground text-background"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground",
+              )}
+              title="Search the entire ACD corpus, ignoring the selected prefix"
+            >
+              all prefixes
+            </button>
+          </div>
+          {(searchScope === "global"
+            ? globalSearch?.protoCodesInResults ?? []
+            : data?.protoCodesInPrefix ?? []
+          ).length > 0 && (
             <div className="flex items-center gap-1 flex-wrap">
               <span className="text-[11px] uppercase tracking-wide text-muted-foreground mr-1">
                 proto layer:
               </span>
-              {data.protoCodesInPrefix.map((code) => {
+              {(searchScope === "global"
+                ? globalSearch?.protoCodesInResults ?? []
+                : data?.protoCodesInPrefix ?? []
+              ).map((code) => {
                 const active = layersFilter.has(code);
                 return (
                   <button
@@ -339,19 +428,23 @@ function DictionaryPage() {
       {/* Page body — scrollable list, no pagination */}
       <main className="flex-1 min-h-0 overflow-y-auto">
         <div className="max-w-4xl mx-auto px-6 py-6">
-          {data && (
+          {searchScope === "global" ? (
             <div className="mb-4 text-sm text-muted-foreground">
-              Prefix{" "}
-              <span className="font-mono uppercase font-semibold text-foreground">
-                {prefixParam}
-              </span>{" "}
-              · {data.totalRows} reconstructions
-              {query.trim() && filteredRows.length !== data.totalRows && (
+              Global search
+              {query.trim() ? (
                 <>
                   {" "}
-                  · <span className="text-foreground">{filteredRows.length}</span>{" "}
-                  match “{query}”
+                  for “
+                  <span className="text-foreground">{query.trim()}</span>”
+                  ·{" "}
+                  <span className="text-foreground">
+                    {globalSearch?.totalRows ?? 0}
+                  </span>{" "}
+                  result{(globalSearch?.totalRows ?? 0) === 1 ? "" : "s"}
+                  {globalSearch?.truncated && " (truncated; refine query)"}
                 </>
+              ) : (
+                <> — type at least 2 characters to search the full corpus.</>
               )}
               {layersFilter.size > 0 && (
                 <>
@@ -360,27 +453,63 @@ function DictionaryPage() {
                 </>
               )}
             </div>
+          ) : (
+            data && (
+              <div className="mb-4 text-sm text-muted-foreground">
+                Prefix{" "}
+                <span className="font-mono uppercase font-semibold text-foreground">
+                  {prefixParam}
+                </span>{" "}
+                · {data.totalRows} reconstructions
+                {query.trim() && filteredRows.length !== data.totalRows && (
+                  <>
+                    {" "}
+                    ·{" "}
+                    <span className="text-foreground">{filteredRows.length}</span>{" "}
+                    match “{query}”
+                  </>
+                )}
+                {layersFilter.size > 0 && (
+                  <>
+                    {" "}
+                    · filtered by {Array.from(layersFilter).join(", ")}
+                  </>
+                )}
+              </div>
+            )
           )}
 
-          {loading && (
+          {(searchScope === "prefix" ? loading : globalSearchLoading) && (
             <div className="py-12 flex flex-col items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="h-5 w-5 animate-spin" />
-              loading…
+              {searchScope === "global" ? "searching corpus…" : "loading…"}
             </div>
           )}
-          {error && (
+          {error && searchScope === "prefix" && (
             <div className="py-12 text-center text-sm text-rose-700">
               {error}
             </div>
           )}
 
-          {data && !loading && data.rows.length === 0 && (
-            <div className="py-12 text-center text-sm text-muted-foreground">
-              No reconstructions for prefix{" "}
-              <span className="font-mono">{prefixParam}</span>
-              {layersFilter.size > 0 && " with the chosen layer filter"}.
-            </div>
-          )}
+          {searchScope === "prefix" &&
+            data &&
+            !loading &&
+            data.rows.length === 0 && (
+              <div className="py-12 text-center text-sm text-muted-foreground">
+                No reconstructions for prefix{" "}
+                <span className="font-mono">{prefixParam}</span>
+                {layersFilter.size > 0 && " with the chosen layer filter"}.
+              </div>
+            )}
+          {searchScope === "global" &&
+            !globalSearchLoading &&
+            query.trim().length >= 2 &&
+            (globalSearch?.rows.length ?? 0) === 0 && (
+              <div className="py-12 text-center text-sm text-muted-foreground">
+                No matches for “{query.trim()}” across the full corpus
+                {layersFilter.size > 0 && " with the chosen layer filter"}.
+              </div>
+            )}
 
           {filteredRows.length > 0 && (
             <ul className="space-y-2">
