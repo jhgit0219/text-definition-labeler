@@ -1,0 +1,1 @@
+ALTER TABLE "acd_reflexes" ADD COLUMN "subgroup_code" varchar(16) DEFAULT '' NOT NULL;

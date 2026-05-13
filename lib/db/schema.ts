@@ -204,6 +204,14 @@ export const acdReflexes = pgTable(
     pidno: integer("pidno")
       .notNull()
       .references(() => acdReconstructions.pidno, { onDelete: "cascade" }),
+    /**
+     * Major branch of Austronesian as labeled by ACD:
+     *   Formosan, WMP, CMP, SHWNG, OC
+     * Used by the dictionary + recon panel to bucket large reflex lists.
+     * Defaulted blank for any rows where the CSV happens to have no code,
+     * which the UI groups under "Other".
+     */
+    subgroupCode: varchar("subgroup_code", { length: 16 }).notNull().default(""),
     languageName: text("language_name").notNull(),
     form: text("form").notNull(),
     formPlain: text("form_plain").notNull(),

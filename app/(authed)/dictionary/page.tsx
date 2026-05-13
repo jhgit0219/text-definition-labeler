@@ -22,6 +22,7 @@ import {
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { groupBySubgroup } from "@/lib/recon/subgroups";
 
 interface PrefixHistEntry {
   prefix: string;
@@ -48,6 +49,7 @@ interface PrefixResponse {
 
 interface AcdReflex {
   id: number;
+  subgroupCode: string;
   languageName: string;
   form: string;
   formPlain: string;
@@ -509,23 +511,38 @@ function AcdRowItem({
                 </p>
               )}
               {reflexes && reflexes.length > 0 && (
-                <table className="text-xs w-full mt-1">
-                  <tbody>
-                    {reflexes.map((rx) => (
-                      <tr key={rx.id} className="align-top leading-snug">
-                        <td className="w-32 pr-3 text-muted-foreground whitespace-nowrap">
-                          {rx.languageName}
-                        </td>
-                        <td className="w-28 pr-3 font-mono text-foreground whitespace-nowrap">
-                          {rx.form}
-                        </td>
-                        <td className="italic text-muted-foreground">
-                          ‘{rx.glossText}’
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <div className="mt-1 space-y-3">
+                  {groupBySubgroup(reflexes).map((group) => (
+                    <section key={group.code}>
+                      <h4 className="text-[10px] uppercase tracking-wide font-semibold text-muted-foreground mb-1">
+                        {group.label}{" "}
+                        <span className="tabular-nums font-normal">
+                          ({group.reflexes.length})
+                        </span>
+                      </h4>
+                      <table className="text-xs w-full">
+                        <tbody>
+                          {group.reflexes.map((rx) => (
+                            <tr
+                              key={rx.id}
+                              className="align-top leading-snug"
+                            >
+                              <td className="w-32 pr-3 text-muted-foreground whitespace-nowrap">
+                                {rx.languageName}
+                              </td>
+                              <td className="w-28 pr-3 font-mono text-foreground whitespace-nowrap">
+                                {rx.form}
+                              </td>
+                              <td className="italic text-muted-foreground">
+                                ‘{rx.glossText}’
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </section>
+                  ))}
+                </div>
               )}
             </div>
           )}

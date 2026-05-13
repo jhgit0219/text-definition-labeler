@@ -29,6 +29,7 @@ export async function GET(
   const reflexes = await db
     .select({
       id: schema.acdReflexes.id,
+      subgroupCode: schema.acdReflexes.subgroupCode,
       languageName: schema.acdReflexes.languageName,
       form: schema.acdReflexes.form,
       formPlain: schema.acdReflexes.formPlain,

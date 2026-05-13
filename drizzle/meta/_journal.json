@@ -15,6 +15,13 @@
       "when": 1778663502724,
       "tag": "0001_acd_browse",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1778666139735,
+      "tag": "0002_acd_subgroup_code",
+      "breakpoints": true
     }
   ]
 }

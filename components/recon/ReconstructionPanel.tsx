@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
+import { groupBySubgroup } from "@/lib/recon/subgroups";
 import {
   fetchReconstruction,
   runReconstruction,
@@ -594,6 +595,7 @@ interface FullReflex {
   language: string;
   form: string;
   gloss_text: string;
+  subgroupCode: string;
 }
 
 function CandidateRow({
@@ -632,18 +634,33 @@ function CandidateRow({
         if (res.ok) {
           const body = await res.json();
           const reflexes: FullReflex[] = (body.reflexes ?? []).map(
-            (r: { languageName: string; form: string; glossText: string }) => ({
+            (r: {
+              languageName: string;
+              form: string;
+              glossText: string;
+              subgroupCode?: string;
+            }) => ({
               language: r.languageName,
               form: r.form,
               gloss_text: r.glossText,
+              subgroupCode: r.subgroupCode ?? "",
             }),
           );
           setFullReflexes(reflexes);
         } else {
           // Fall back to the sample if the corpus endpoint fails (e.g.
           // pidno not in acd_reconstructions — shouldn't happen with the
-          // iter-2 import but keep the panel usable either way).
-          setFullReflexes(ranking.sample_reflexes);
+          // iter-2 import but keep the panel usable either way). The
+          // sample doesn't carry subgroupCode; everything groups under
+          // "Other" which is acceptable for a degraded fallback.
+          setFullReflexes(
+            ranking.sample_reflexes.map((r) => ({
+              language: r.language,
+              form: r.form,
+              gloss_text: r.gloss_text,
+              subgroupCode: "",
+            })),
+          );
         }
       } finally {
         setReflexLoading(false);
@@ -651,10 +668,16 @@ function CandidateRow({
     }
   }
 
-  const reflexesToRender =
+  const reflexesToRender: FullReflex[] =
     fullReflexes !== null && fullReflexes.length > 0
       ? fullReflexes
-      : ranking.sample_reflexes;
+      : ranking.sample_reflexes.map((r) => ({
+          language: r.language,
+          form: r.form,
+          gloss_text: r.gloss_text,
+          subgroupCode: "",
+        }));
+  const reflexGroups = groupBySubgroup(reflexesToRender);
   return (
     <li
       className={cn(
@@ -734,18 +757,32 @@ function CandidateRow({
             </div>
           )}
           {showReflexes && !reflexLoading && (
-            <ul className="mt-1 space-y-0.5">
-              {reflexesToRender.map((r, idx) => (
-                <li
-                  key={idx}
-                  className="text-[11px] text-muted-foreground flex gap-2"
-                >
-                  <span className="w-24 flex-shrink-0">{r.language}</span>
-                  <span className="font-mono text-foreground">{r.form}</span>
-                  <span className="italic">‘{r.gloss_text}’</span>
-                </li>
+            <div className="mt-1 space-y-2">
+              {reflexGroups.map((g) => (
+                <section key={g.code}>
+                  <h5 className="text-[9px] uppercase tracking-wide font-semibold text-muted-foreground">
+                    {g.label}{" "}
+                    <span className="tabular-nums font-normal">
+                      ({g.reflexes.length})
+                    </span>
+                  </h5>
+                  <ul className="space-y-0.5">
+                    {g.reflexes.map((r, idx) => (
+                      <li
+                        key={idx}
+                        className="text-[11px] text-muted-foreground flex gap-2"
+                      >
+                        <span className="w-24 flex-shrink-0">{r.language}</span>
+                        <span className="font-mono text-foreground">
+                          {r.form}
+                        </span>
+                        <span className="italic">‘{r.gloss_text}’</span>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
               ))}
-            </ul>
+            </div>
           )}
         </div>
       </div>
