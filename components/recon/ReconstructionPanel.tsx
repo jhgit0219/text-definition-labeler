@@ -22,9 +22,11 @@ import { Label } from "@/components/ui/label";
 import { groupBySubgroup } from "@/lib/recon/subgroups";
 import {
   fetchReconstruction,
-  runReconstruction,
+  enqueueReconstruction,
+  fetchActiveJob,
   savePicks,
   ReconError,
+  type ActiveJobDto,
   type ReconResponseDto,
   type ReconstructionPickDto,
   type ReconstructionRowDto,
@@ -56,18 +58,9 @@ type PanelState =
   | { kind: "not-accepted"; entry: Entry }
   | { kind: "loading"; entry: Entry }
   | { kind: "miss"; entry: Entry; spreadsheet: SpreadsheetProtosDto | null }
-  | { kind: "queued"; entry: Entry }
+  | { kind: "queued"; entry: Entry; job: ActiveJobDto; spreadsheet: SpreadsheetProtosDto | null }
   | { kind: "done"; entry: Entry; data: ReconResponseDto }
-  | {
-      kind: "error";
-      entry: Entry;
-      message: string;
-      // Snapshot of where the panel was right before the error so the
-      // "Back to entry" button can dismiss the error without forcing a
-      // fresh round-trip. Null when the error happened during the
-      // initial entry load (no prior non-error state to return to).
-      previous: PanelState | null;
-    };
+  | { kind: "error"; entry: Entry; message: string; previous: PanelState | null };
 
 /**
  * Live AI reconstruction is feature-flagged. When the flag is off the
@@ -119,6 +112,18 @@ export function ReconstructionPanel({
     fetchReconstruction(entry.id)
       .then((data) => {
         if (activeEntryRef.current !== entry.id) return;
+        if (data.activeJob && data.activeJob.status !== "done") {
+          setState({
+            kind: "queued",
+            entry,
+            job: data.activeJob,
+            spreadsheet: data.spreadsheetProtos,
+          });
+          setDraftPicks([]);
+          setDraftNotes(data.entryNotes ?? "");
+          setSavedSnapshot({ picks: [], notes: data.entryNotes ?? "" });
+          return;
+        }
         if (data.reconstruction === null) {
           setState({
             kind: "miss",
@@ -128,10 +133,6 @@ export function ReconstructionPanel({
           setDraftPicks([]);
           setDraftNotes(data.entryNotes ?? "");
           setSavedSnapshot({ picks: [], notes: data.entryNotes ?? "" });
-          return;
-        }
-        if (data.reconstruction.status === "queued") {
-          setState({ kind: "queued", entry });
           return;
         }
         const initialPicks: PickInput[] = data.picks.map((p) => ({
@@ -146,9 +147,6 @@ export function ReconstructionPanel({
       })
       .catch((err) => {
         if (activeEntryRef.current !== entry.id) return;
-        // No previous state to fall back to — this catch fires on the
-        // initial load. The error view will fall back to refetch via
-        // its Retry button.
         setState({
           kind: "error",
           entry,
@@ -157,6 +155,55 @@ export function ReconstructionPanel({
         });
       });
   }, [entry?.id, entry?.state, reloadKey]);
+
+  // Poll the job endpoint while we're in the queued state. Transitions:
+  //   pending/running -> done  : refetch GET /api/recon, switch to "done"
+  //   pending/running -> error : surface error and let the user retry
+  useEffect(() => {
+    if (state.kind !== "queued") return;
+    const entryId = state.entry.id;
+    let cancelled = false;
+    const interval = setInterval(async () => {
+      try {
+        const job = await fetchActiveJob(entryId);
+        if (cancelled || activeEntryRef.current !== entryId) return;
+        if (!job) return;
+        if (job.status === "done") {
+          const data = await fetchReconstruction(entryId);
+          if (cancelled || activeEntryRef.current !== entryId) return;
+          const initialPicks: PickInput[] = data.picks.map((p) => ({
+            pidno: p.pidno,
+            isPrimary: p.isPrimary,
+            source: p.source,
+          }));
+          setDraftPicks(initialPicks);
+          setDraftNotes(data.entryNotes ?? "");
+          setSavedSnapshot({ picks: initialPicks, notes: data.entryNotes ?? "" });
+          setState({ kind: "done", entry: state.entry, data });
+          return;
+        }
+        if (job.status === "error") {
+          setState({
+            kind: "error",
+            entry: state.entry,
+            message: job.errorMessage ?? "Reconstruction failed",
+            previous: { kind: "miss", entry: state.entry, spreadsheet: state.spreadsheet },
+          });
+          return;
+        }
+        // still pending / running — update job in state so position / timer refresh
+        setState((prev) =>
+          prev.kind === "queued" ? { ...prev, job } : prev,
+        );
+      } catch {
+        // ignore transient polling failures
+      }
+    }, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [state.kind === "queued" ? state.entry.id : null]);
 
   const dirty = useMemo(() => {
     if (!savedSnapshot) return false;
@@ -178,32 +225,23 @@ export function ReconstructionPanel({
 
   async function onAttempt(opts: { force?: boolean } = {}) {
     if (state.kind !== "miss" && state.kind !== "done") return;
-    // Snapshot the state we're leaving so the error view can offer a
-    // one-click "back to entry" without firing another round-trip.
     const previousState = state;
     const targetEntry = state.entry;
+    const spreadsheet =
+      state.kind === "miss"
+        ? state.spreadsheet
+        : state.data.spreadsheetProtos;
     setRunning(true);
     try {
-      const data = await runReconstruction(targetEntry.id, opts);
+      await enqueueReconstruction(targetEntry.id, opts);
       if (activeEntryRef.current !== targetEntry.id) return;
-      if (data.reconstruction) {
-        const initialPicks: PickInput[] = data.picks.map((p) => ({
-          pidno: p.pidno,
-          isPrimary: p.isPrimary,
-          source: p.source,
-        }));
-        setDraftPicks(initialPicks);
-        setDraftNotes(data.entryNotes ?? "");
-        setSavedSnapshot({ picks: initialPicks, notes: data.entryNotes ?? "" });
-        setState({ kind: "done", entry: targetEntry, data });
+      const job = await fetchActiveJob(targetEntry.id);
+      if (activeEntryRef.current !== targetEntry.id) return;
+      if (job) {
+        setState({ kind: "queued", entry: targetEntry, job, spreadsheet });
       }
     } catch (err) {
-      const msg =
-        err instanceof ReconError && err.status === 409
-          ? "Reconstruction already exists for this word — refreshing."
-          : err instanceof Error
-            ? err.message
-            : String(err);
+      const msg = err instanceof Error ? err.message : String(err);
       setState({
         kind: "error",
         entry: targetEntry,
@@ -335,7 +373,12 @@ export function ReconstructionPanel({
           />
         )}
         {state.kind === "queued" && (
-          <CenteredSpinner label="Reconstructing… (this can take ~30s)" />
+          <QueuedView
+            entry={state.entry}
+            job={state.job}
+            spreadsheet={state.spreadsheet}
+            onBrowseAcd={onBrowseAcd}
+          />
         )}
         {state.kind === "error" && (
           <ErrorView
@@ -489,6 +532,51 @@ function ErrorView({
           Retry
         </Button>
       </div>
+    </div>
+  );
+}
+
+function QueuedView({
+  entry,
+  job,
+  spreadsheet,
+  onBrowseAcd,
+}: {
+  entry: Entry;
+  job: ActiveJobDto;
+  spreadsheet: SpreadsheetProtosDto | null;
+  onBrowseAcd?: (prefix: string) => void;
+}) {
+  const elapsedSec = job.startedAt
+    ? Math.max(0, Math.floor((Date.now() - new Date(job.startedAt).getTime()) / 1000))
+    : 0;
+  return (
+    <div className="px-4 py-4 space-y-4">
+      {spreadsheet && <SpreadsheetReferenceCard data={spreadsheet} />}
+      <div className="rounded-md border border-blue-200 bg-blue-50/60 p-4 space-y-2">
+        <div className="flex items-center gap-2">
+          <Loader2 className="h-4 w-4 animate-spin text-blue-700" />
+          <span className="text-sm font-semibold text-blue-900">
+            {job.status === "running"
+              ? `Reconstructing… (${elapsedSec}s)`
+              : "Queued"}
+          </span>
+        </div>
+        <p className="text-xs text-blue-900/80 leading-snug">
+          {job.status === "running" ? (
+            <>The worker is calling Claude. This usually takes 1–5 minutes.</>
+          ) : job.position !== null ? (
+            <>
+              Position <span className="font-semibold">{job.position}</span> in
+              the queue. You can leave this page — we'll save the result when
+              it lands.
+            </>
+          ) : (
+            <>Waiting for the worker to pick this up…</>
+          )}
+        </p>
+      </div>
+      <BrowseAcdLink entry={entry} onBrowseAcd={onBrowseAcd} />
     </div>
   );
 }

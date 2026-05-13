@@ -165,6 +165,37 @@ export const entryReconstructionPicks = pgTable(
 export type EntryReconstructionPick = typeof entryReconstructionPicks.$inferSelect;
 export type NewEntryReconstructionPick = typeof entryReconstructionPicks.$inferInsert;
 
+// status lifecycle: pending -> running -> done | error.
+// Partial unique index (entry_id) WHERE status IN (pending,running)
+// keeps at most one active job per entry; added in the migration SQL.
+export const reconJobs = pgTable(
+  "recon_jobs",
+  {
+    id: serial("id").primaryKey(),
+    entryId: integer("entry_id")
+      .notNull()
+      .references(() => entries.id, { onDelete: "cascade" }),
+    text: text("text").notNull(),
+    gloss: text("gloss").notNull(),
+    entryStateAtEnqueue: varchar("entry_state_at_enqueue", { length: 16 }).notNull(),
+    status: varchar("status", { length: 16 }).notNull().default("pending"),
+    result: jsonb("result"),
+    errorKind: varchar("error_kind", { length: 64 }),
+    errorMessage: text("error_message"),
+    workerId: text("worker_id"),
+    enqueuedAt: timestamp("enqueued_at", { withTimezone: true }).notNull().defaultNow(),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (t) => ({
+    statusIdx: index("recon_jobs_status_idx").on(t.status),
+    entryIdx: index("recon_jobs_entry_idx").on(t.entryId),
+  }),
+);
+
+export type ReconJob = typeof reconJobs.$inferSelect;
+export type NewReconJob = typeof reconJobs.$inferInsert;
+
 /**
  * Full ACD reconstruction corpus, imported once from the parsed CSVs in
  * the sibling bisaya-reconstruction repo (~12K rows). Used by the

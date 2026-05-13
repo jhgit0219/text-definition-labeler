@@ -82,6 +82,17 @@ export interface SpreadsheetProtosDto {
   notes?: string | null;
 }
 
+export interface ActiveJobDto {
+  id: number;
+  status: "pending" | "running" | "done" | "error";
+  position: number | null;
+  enqueuedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  errorKind: string | null;
+  errorMessage: string | null;
+}
+
 export interface ReconResponseDto {
   entry: {
     id: number;
@@ -95,6 +106,7 @@ export interface ReconResponseDto {
   picks: ReconstructionPickDto[];
   entryNotes: string | null;
   spreadsheetProtos: SpreadsheetProtosDto | null;
+  activeJob: ActiveJobDto | null;
 }
 
 export class ReconError extends Error {
@@ -146,34 +158,33 @@ export async function fetchReconstruction(
   return body;
 }
 
-/**
- * POST /api/recon/[entry_id] — "Attempt with AI".
- *
- * Default behavior 409s if a cached row already exists (caller should
- * refresh via GET). Pass `force: true` to bypass the check and UPDATE the
- * cached row with a fresh AI ranking — used by the re-run button when
- * the annotator wants a new take on an already-ranked word. Existing AI
- * picks survive because the reconstruction row's id (the FK target)
- * doesn't change.
- */
-export async function runReconstruction(
+// POST /api/recon/[entry_id] — enqueue an AI reconstruction job.
+// Returns {jobId, status, position, reusedExisting}. The recon panel
+// polls /api/recon/[entry_id]/job for status changes.
+export interface EnqueueResponse {
+  jobId: number;
+  status: "pending" | "running" | "done" | "error";
+  position: number | null;
+  reusedExisting: boolean;
+}
+
+export async function enqueueReconstruction(
   entryId: number,
   opts: { force?: boolean } = {},
-): Promise<ReconResponseDto> {
+): Promise<EnqueueResponse> {
   const url = opts.force
     ? `/api/recon/${entryId}?force=1`
     : `/api/recon/${entryId}`;
   const res = await fetch(url, { method: "POST" });
-  const body = await parseResponse<ReconResponseDto>(res);
-  if (body.reconstruction) {
-    RANKINGS_PAYLOAD.parse({
-      schema_version: body.reconstruction.schemaVersion,
-      rankings: body.reconstruction.rankings,
-      model_id: body.reconstruction.modelId,
-      prompt_template_version: body.reconstruction.promptVersion,
-    });
-  }
-  return body;
+  return parseResponse<EnqueueResponse>(res);
+}
+
+export async function fetchActiveJob(
+  entryId: number,
+): Promise<ActiveJobDto | null> {
+  const res = await fetch(`/api/recon/${entryId}/job`);
+  const body = await parseResponse<{ job: ActiveJobDto | null }>(res);
+  return body.job;
 }
 
 /** PUT /api/recon/[entry_id]/picks — replace pick set + notes transactionally. */

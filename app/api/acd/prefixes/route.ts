@@ -27,14 +27,8 @@ export const revalidate = 0;
  * once on mount.
  */
 export async function GET() {
-  // Allowed first/second-char codepoints in the prefix nav:
-  //   a..z (97..122)
-  //   ñ    (U+00F1 = 241)  — palatal nasal, distinct letter in ACD
-  //   ŋ    (U+014B = 331)  — velar nasal, distinct letter in ACD
-  //
-  // Explicit ASCII-byte filtering instead of POSIX `[a-z]` because that
-  // class is locale-aware in PostgreSQL's UTF-8 collation and would
-  // silently include other Latin-extended letters too.
+  // Allowed first/second chars: a-z, ñ (241), ŋ (331). Explicit codepoints
+  // rather than POSIX [a-z] which is locale-aware in UTF-8 collations.
   const formPlain = schema.acdReconstructions.formPlain;
   const prefixExpr = sql<string>`LOWER(SUBSTRING(${formPlain}, 1, 2))`;
   const isLetterClause = sql`
