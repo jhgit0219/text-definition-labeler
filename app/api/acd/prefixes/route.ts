@@ -27,27 +27,33 @@ export const revalidate = 0;
  * once on mount.
  */
 export async function GET() {
-  // Take the first two characters of the lowercased form_plain. The
-  // ascii(...) check below is explicit ASCII-byte filtering instead of
-  // `~ '^[a-z][a-z]$'` — POSIX character classes in PostgreSQL's
-  // default UTF-8 collation are locale-aware, so `[a-z]` happily
-  // matches `ŋ`, `ə`, `ñ`, and other Latin-extended letters used in
-  // proto-form transcription. We only want a..z, byte values 97-122.
+  // Allowed first/second-char codepoints in the prefix nav:
+  //   a..z (97..122)
+  //   ñ    (U+00F1 = 241)  — palatal nasal, distinct letter in ACD
+  //   ŋ    (U+014B = 331)  — velar nasal, distinct letter in ACD
+  //
+  // Explicit ASCII-byte filtering instead of POSIX `[a-z]` because that
+  // class is locale-aware in PostgreSQL's UTF-8 collation and would
+  // silently include other Latin-extended letters too.
   const formPlain = schema.acdReconstructions.formPlain;
   const prefixExpr = sql<string>`LOWER(SUBSTRING(${formPlain}, 1, 2))`;
+  const isLetterClause = sql`
+    (
+      ASCII(LOWER(SUBSTRING(${formPlain}, 1, 1))) BETWEEN 97 AND 122
+      OR ASCII(LOWER(SUBSTRING(${formPlain}, 1, 1))) IN (241, 331)
+    )
+    AND (
+      ASCII(LOWER(SUBSTRING(${formPlain}, 2, 1))) BETWEEN 97 AND 122
+      OR ASCII(LOWER(SUBSTRING(${formPlain}, 2, 1))) IN (241, 331)
+    )
+  `;
   const rows = await db
     .select({
       prefix: prefixExpr.as("prefix"),
       count: sql<number>`COUNT(*)::int`.as("count"),
     })
     .from(schema.acdReconstructions)
-    .where(
-      sql`
-        LENGTH(${formPlain}) >= 2
-        AND ASCII(LOWER(SUBSTRING(${formPlain}, 1, 1))) BETWEEN 97 AND 122
-        AND ASCII(LOWER(SUBSTRING(${formPlain}, 2, 1))) BETWEEN 97 AND 122
-      `,
-    )
+    .where(sql`LENGTH(${formPlain}) >= 2 AND ${isLetterClause}`)
     .groupBy(prefixExpr)
     .orderBy(asc(prefixExpr));
   return NextResponse.json({ prefixes: rows });

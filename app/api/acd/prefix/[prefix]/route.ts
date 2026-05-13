@@ -25,11 +25,17 @@ import { db, schema } from "@/lib/db";
 
 const MAX_ROWS = 1_000; // safety cap; no real prefix is this large
 
+// Accepted prefix characters: ASCII a-z plus ñ (U+00F1) and ŋ (U+014B),
+// the two non-ASCII letters that appear word-initially in ACD proto-
+// forms. Anything else (parens, hyphens, brackets, schwa, etc.) is
+// notation — rejected here so the URL surface stays clean.
+const VALID_PREFIX_CHAR = /^[a-zñŋ]$/i;
+
 function parsePrefix(raw: string): string {
   const t = decodeURIComponent(raw || "").trim().toLowerCase();
   if (t.length === 0 || t.length > 2) return "";
   for (const ch of t) {
-    if (!(ch >= "a" && ch <= "z")) return "";
+    if (!VALID_PREFIX_CHAR.test(ch)) return "";
   }
   return t;
 }
