@@ -38,6 +38,7 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
+import { ReconstructionPanel } from "@/components/recon/ReconstructionPanel";
 
 type EntryState = "pending" | "accepted" | "rejected" | "no_ouv";
 
@@ -270,13 +271,13 @@ export default function ReviewPage() {
     <ResizablePanelGroup
       direction="horizontal"
       className="h-screen overflow-hidden bg-background text-foreground"
-      autoSaveId="labeler-layout"
+      autoSaveId="labeler-layout-v2"
     >
       {/* SIDE PANEL — entry list (navigation only) */}
       <ResizablePanel
-        defaultSize={22}
-        minSize={16}
-        maxSize={40}
+        defaultSize={18}
+        minSize={14}
+        maxSize={35}
         className="bg-card flex flex-col overflow-hidden"
       >
         <header className="px-4 h-14 flex items-center justify-between border-b border-border flex-shrink-0">
@@ -418,9 +419,9 @@ export default function ReviewPage() {
 
       {/* EDIT FORM PANEL */}
       <ResizablePanel
-        defaultSize={28}
-        minSize={20}
-        maxSize={50}
+        defaultSize={25}
+        minSize={18}
+        maxSize={45}
         className="bg-card flex flex-col overflow-hidden"
       >
         {/* Persistent header bar — same h-14 as the side panel title bar so they
@@ -575,8 +576,8 @@ export default function ReviewPage() {
 
       {/* PAGE IMAGE PANEL — drag to pan (bounded), scroll-wheel or buttons to zoom */}
       <ResizablePanel
-        defaultSize={50}
-        minSize={20}
+        defaultSize={35}
+        minSize={18}
         className="relative overflow-hidden"
       >
         {currentPage === null ? (
@@ -658,6 +659,31 @@ export default function ReviewPage() {
             </div>
           </>
         )}
+      </ResizablePanel>
+
+      <ResizableHandle />
+
+      {/* RECONSTRUCTION PANEL — AI-ranked PMP cognate candidates for the
+          active entry. Reads from Postgres cache; on miss, the operator hits
+          "Attempt with AI" which POSTs to the Python service. */}
+      <ResizablePanel
+        defaultSize={22}
+        minSize={16}
+        maxSize={40}
+        className="overflow-hidden"
+      >
+        <ReconstructionPanel
+          entry={
+            active
+              ? {
+                  id: active.id,
+                  text: active.text,
+                  glossRaw: active.glossRaw,
+                  state: active.state,
+                }
+              : null
+          }
+        />
       </ResizablePanel>
     </ResizablePanelGroup>
   );

@@ -11,6 +11,7 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
+    "db:check-state": "tsx scripts/check-state.ts",
     "seed:dev": "tsx scripts/seed-dev.ts",
     "import": "tsx scripts/import-from-json.ts"
   },

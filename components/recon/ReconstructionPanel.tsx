@@ -1,0 +1,629 @@
+"use client";
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Star, Sparkles, RefreshCw, AlertCircle, Loader2 } from "lucide-react";
+
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
+import {
+  fetchReconstruction,
+  runReconstruction,
+  savePicks,
+  ReconError,
+  type ReconResponseDto,
+  type ReconstructionPickDto,
+  type ReconstructionRowDto,
+  type SpreadsheetProtosDto,
+  type PickInput,
+} from "@/lib/recon/fetch-recon";
+import type { Ranking } from "@/lib/recon/rankings-schema";
+
+interface Entry {
+  id: number;
+  text: string;
+  glossRaw: string;
+  state: string;
+}
+
+interface Props {
+  entry: Entry | null;
+}
+
+type PanelState =
+  | { kind: "no-entry" }
+  | { kind: "not-accepted"; entry: Entry }
+  | { kind: "loading"; entry: Entry }
+  | { kind: "miss"; entry: Entry; spreadsheet: SpreadsheetProtosDto | null }
+  | { kind: "queued"; entry: Entry }
+  | { kind: "done"; entry: Entry; data: ReconResponseDto }
+  | { kind: "error"; entry: Entry; message: string };
+
+export function ReconstructionPanel({ entry }: Props) {
+  const [state, setState] = useState<PanelState>({ kind: "no-entry" });
+  const [running, setRunning] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [savedFlash, setSavedFlash] = useState(false);
+
+  // Form state that overlays the fetched picks/notes — lets the user toggle
+  // without round-tripping every keystroke.
+  const [draftPicks, setDraftPicks] = useState<PickInput[]>([]);
+  const [draftNotes, setDraftNotes] = useState<string>("");
+  const [savedSnapshot, setSavedSnapshot] = useState<{
+    picks: PickInput[];
+    notes: string;
+  } | null>(null);
+
+  // Track which entry ID's data we hold so we don't apply stale fetches.
+  const activeEntryRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!entry) {
+      setState({ kind: "no-entry" });
+      activeEntryRef.current = null;
+      return;
+    }
+    if (entry.state !== "accepted") {
+      setState({ kind: "not-accepted", entry });
+      activeEntryRef.current = entry.id;
+      return;
+    }
+    activeEntryRef.current = entry.id;
+    setState({ kind: "loading", entry });
+    fetchReconstruction(entry.id)
+      .then((data) => {
+        if (activeEntryRef.current !== entry.id) return;
+        if (data.reconstruction === null) {
+          setState({
+            kind: "miss",
+            entry,
+            spreadsheet: data.spreadsheetProtos,
+          });
+          setDraftPicks([]);
+          setDraftNotes(data.entryNotes ?? "");
+          setSavedSnapshot({ picks: [], notes: data.entryNotes ?? "" });
+          return;
+        }
+        if (data.reconstruction.status === "queued") {
+          setState({ kind: "queued", entry });
+          return;
+        }
+        const initialPicks: PickInput[] = data.picks.map((p) => ({
+          pidno: p.pidno,
+          isPrimary: p.isPrimary,
+        }));
+        setDraftPicks(initialPicks);
+        setDraftNotes(data.entryNotes ?? "");
+        setSavedSnapshot({ picks: initialPicks, notes: data.entryNotes ?? "" });
+        setState({ kind: "done", entry, data });
+      })
+      .catch((err) => {
+        if (activeEntryRef.current !== entry.id) return;
+        setState({
+          kind: "error",
+          entry,
+          message: err instanceof Error ? err.message : String(err),
+        });
+      });
+  }, [entry?.id, entry?.state]);
+
+  const dirty = useMemo(() => {
+    if (!savedSnapshot) return false;
+    if (draftNotes !== savedSnapshot.notes) return true;
+    if (draftPicks.length !== savedSnapshot.picks.length) return true;
+    const a = sortPicks(draftPicks);
+    const b = sortPicks(savedSnapshot.picks);
+    for (let i = 0; i < a.length; i++) {
+      if (a[i].pidno !== b[i].pidno || a[i].isPrimary !== b[i].isPrimary) {
+        return true;
+      }
+    }
+    return false;
+  }, [draftPicks, draftNotes, savedSnapshot]);
+
+  async function onAttempt() {
+    if (state.kind !== "miss") return;
+    setRunning(true);
+    try {
+      const data = await runReconstruction(state.entry.id);
+      if (activeEntryRef.current !== state.entry.id) return;
+      if (data.reconstruction) {
+        const initialPicks: PickInput[] = data.picks.map((p) => ({
+          pidno: p.pidno,
+          isPrimary: p.isPrimary,
+        }));
+        setDraftPicks(initialPicks);
+        setDraftNotes(data.entryNotes ?? "");
+        setSavedSnapshot({ picks: initialPicks, notes: data.entryNotes ?? "" });
+        setState({ kind: "done", entry: state.entry, data });
+      }
+    } catch (err) {
+      const msg =
+        err instanceof ReconError && err.status === 409
+          ? "Reconstruction already exists for this word — refreshing."
+          : err instanceof Error
+            ? err.message
+            : String(err);
+      setState({ kind: "error", entry: state.entry, message: msg });
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  async function onSave() {
+    if (state.kind !== "done") return;
+    setSaving(true);
+    try {
+      const data = await savePicks(state.entry.id, draftPicks, draftNotes || null);
+      const initialPicks: PickInput[] = data.picks.map((p) => ({
+        pidno: p.pidno,
+        isPrimary: p.isPrimary,
+      }));
+      setSavedSnapshot({ picks: initialPicks, notes: data.entryNotes ?? "" });
+      setSavedFlash(true);
+      setTimeout(() => setSavedFlash(false), 2000);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setState({ kind: "error", entry: state.entry, message: msg });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function togglePick(pidno: number) {
+    setDraftPicks((prev) => {
+      const idx = prev.findIndex((p) => p.pidno === pidno);
+      if (idx >= 0) {
+        const next = prev.filter((p) => p.pidno !== pidno);
+        // If we just removed the primary, promote the first remaining pick
+        // so the "exactly one primary if anything is picked" invariant holds.
+        if (prev[idx].isPrimary && next.length > 0 && !next.some((p) => p.isPrimary)) {
+          next[0] = { ...next[0], isPrimary: true };
+        }
+        return next;
+      }
+      // Adding: first pick is primary; subsequent picks aren't unless they
+      // tap the star.
+      const isPrimary = prev.length === 0;
+      return [...prev, { pidno, isPrimary }];
+    });
+  }
+
+  function setPrimary(pidno: number) {
+    setDraftPicks((prev) => {
+      const exists = prev.some((p) => p.pidno === pidno);
+      if (!exists) {
+        // Starring an unchecked candidate also checks it.
+        return [
+          ...prev.map((p) => ({ ...p, isPrimary: false })),
+          { pidno, isPrimary: true },
+        ];
+      }
+      return prev.map((p) => ({ ...p, isPrimary: p.pidno === pidno }));
+    });
+  }
+
+  // Header is always rendered; only the body switches by state.
+  return (
+    <div className="h-full flex flex-col bg-card">
+      <header className="px-4 h-14 flex items-center border-b border-border flex-shrink-0">
+        <span className="text-sm font-semibold tracking-tight">
+          Reconstruction
+        </span>
+        {state.kind === "done" && (
+          <>
+            <Badge className="ml-2 bg-stone-50 text-stone-700 border border-stone-300 font-normal">
+              cache hit
+            </Badge>
+            {state.data.reconstruction?.looseMatch && (
+              <Badge
+                className="ml-1 bg-amber-50 text-amber-700 border border-amber-300 font-normal"
+                title="Cached ranking was originally computed against a slightly different gloss spelling — same headword."
+              >
+                loose match
+              </Badge>
+            )}
+          </>
+        )}
+      </header>
+
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        {state.kind === "no-entry" && (
+          <EmptyState message="Pick an entry from the list to see its reconstruction." />
+        )}
+        {state.kind === "not-accepted" && (
+          <EmptyState message="Reconstruction appears after the entry is accepted." />
+        )}
+        {state.kind === "loading" && (
+          <CenteredSpinner label="Loading reconstruction…" />
+        )}
+        {state.kind === "miss" && (
+          <MissView
+            entry={state.entry}
+            spreadsheet={state.spreadsheet}
+            onAttempt={onAttempt}
+            running={running}
+          />
+        )}
+        {state.kind === "queued" && (
+          <CenteredSpinner label="Reconstructing… (this can take ~30s)" />
+        )}
+        {state.kind === "error" && (
+          <ErrorView
+            message={state.message}
+            onRetry={() => {
+              activeEntryRef.current = state.entry.id;
+              setState({ kind: "loading", entry: state.entry });
+              fetchReconstruction(state.entry.id)
+                .then((data) => {
+                  if (data.reconstruction) {
+                    const initialPicks: PickInput[] = data.picks.map((p) => ({
+                      pidno: p.pidno,
+                      isPrimary: p.isPrimary,
+                    }));
+                    setDraftPicks(initialPicks);
+                    setDraftNotes(data.entryNotes ?? "");
+                    setSavedSnapshot({
+                      picks: initialPicks,
+                      notes: data.entryNotes ?? "",
+                    });
+                    setState({ kind: "done", entry: state.entry, data });
+                  } else {
+                    setState({
+                      kind: "miss",
+                      entry: state.entry,
+                      spreadsheet: data.spreadsheetProtos,
+                    });
+                  }
+                })
+                .catch((err) => {
+                  setState({
+                    kind: "error",
+                    entry: state.entry,
+                    message: err instanceof Error ? err.message : String(err),
+                  });
+                });
+            }}
+          />
+        )}
+        {state.kind === "done" && (
+          <DoneView
+            data={state.data}
+            draftPicks={draftPicks}
+            draftNotes={draftNotes}
+            onTogglePick={togglePick}
+            onSetPrimary={setPrimary}
+            onNotesChange={setDraftNotes}
+          />
+        )}
+      </div>
+
+      {state.kind === "done" && (
+        <footer className="px-4 py-3 border-t border-border flex-shrink-0 flex items-center gap-2">
+          <Button
+            onClick={onSave}
+            disabled={!dirty || saving}
+            className="flex-1"
+          >
+            {saving ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Saving…
+              </>
+            ) : (
+              "Save picks + notes"
+            )}
+          </Button>
+          {savedFlash && (
+            <span className="text-xs text-emerald-700 font-medium">
+              Saved ✓
+            </span>
+          )}
+        </footer>
+      )}
+    </div>
+  );
+}
+
+function sortPicks(picks: PickInput[]): PickInput[] {
+  return [...picks].sort((a, b) => a.pidno - b.pidno);
+}
+
+function EmptyState({ message }: { message: string }) {
+  return (
+    <div className="px-6 py-12 text-center text-sm text-muted-foreground">
+      {message}
+    </div>
+  );
+}
+
+function CenteredSpinner({ label }: { label: string }) {
+  return (
+    <div className="px-6 py-12 flex flex-col items-center gap-3 text-sm text-muted-foreground">
+      <Loader2 className="h-5 w-5 animate-spin" />
+      <span>{label}</span>
+    </div>
+  );
+}
+
+function ErrorView({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="px-6 py-12 flex flex-col items-center gap-3 text-sm">
+      <AlertCircle className="h-5 w-5 text-rose-600" />
+      <p className="text-center text-muted-foreground">{message}</p>
+      <Button onClick={onRetry} variant="outline" size="sm">
+        <RefreshCw className="h-3.5 w-3.5" />
+        Retry
+      </Button>
+    </div>
+  );
+}
+
+function MissView({
+  entry,
+  spreadsheet,
+  onAttempt,
+  running,
+}: {
+  entry: Entry;
+  spreadsheet: SpreadsheetProtosDto | null;
+  onAttempt: () => void;
+  running: boolean;
+}) {
+  return (
+    <div className="px-4 py-4 space-y-4">
+      {spreadsheet && <SpreadsheetReferenceCard data={spreadsheet} />}
+      <div className="border border-dashed border-border rounded p-4 text-center space-y-3">
+        <p className="text-sm text-muted-foreground">
+          No reconstruction yet for{" "}
+          <span className="font-mono font-medium text-foreground">
+            {entry.text}
+          </span>{" "}
+          /{" "}
+          <span className="italic">
+            {entry.glossRaw || "(empty gloss)"}
+          </span>
+          .
+        </p>
+        <Button onClick={onAttempt} disabled={running}>
+          {running ? (
+            <>
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Calling AI…
+            </>
+          ) : (
+            <>
+              <Sparkles className="h-3.5 w-3.5" />
+              Attempt with AI
+            </>
+          )}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function SpreadsheetReferenceCard({ data }: { data: SpreadsheetProtosDto }) {
+  const rows: Array<[string, string | null | undefined]> = [
+    ["PAN", data.pan],
+    ["PMP", data.pmp],
+    ["PCPh", data.pcph],
+    ["PB", data.pb],
+  ];
+  const visibleRows = rows.filter(([, v]) => v && v.trim());
+  return (
+    <div className="border border-border rounded p-3 bg-stone-50">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[11px] uppercase tracking-wide text-muted-foreground font-semibold">
+          Spreadsheet reference
+        </span>
+        {data.status && (
+          <Badge className="bg-stone-100 text-stone-700 border border-stone-300 font-normal">
+            {data.status}
+          </Badge>
+        )}
+      </div>
+      {visibleRows.length === 0 ? (
+        <p className="text-xs italic text-muted-foreground">
+          (no proto-form recorded in spreadsheet)
+        </p>
+      ) : (
+        <dl className="space-y-1 text-xs">
+          {visibleRows.map(([layer, value]) => (
+            <div key={layer} className="flex gap-2">
+              <dt className="w-12 text-muted-foreground tabular-nums">
+                {layer}
+              </dt>
+              <dd className="font-mono text-foreground">{value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {data.notes && (
+        <p className="mt-2 text-xs italic text-muted-foreground">
+          {data.notes}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function DoneView({
+  data,
+  draftPicks,
+  draftNotes,
+  onTogglePick,
+  onSetPrimary,
+  onNotesChange,
+}: {
+  data: ReconResponseDto;
+  draftPicks: PickInput[];
+  draftNotes: string;
+  onTogglePick: (pidno: number) => void;
+  onSetPrimary: (pidno: number) => void;
+  onNotesChange: (s: string) => void;
+}) {
+  const recon = data.reconstruction!;
+  const rankings = recon.rankings;
+  const pickByPidno = useMemo(() => {
+    const m = new Map<number, PickInput>();
+    for (const p of draftPicks) m.set(p.pidno, p);
+    return m;
+  }, [draftPicks]);
+
+  return (
+    <div className="px-4 py-4 space-y-4">
+      {data.spreadsheetProtos && (
+        <SpreadsheetReferenceCard data={data.spreadsheetProtos} />
+      )}
+      <div className="text-[11px] text-muted-foreground flex items-center gap-2 flex-wrap">
+        <span>{recon.modelId}</span>
+        <span>·</span>
+        <span>{recon.promptVersion}</span>
+        <span>·</span>
+        <span>{new Date(recon.computedAt).toLocaleDateString()}</span>
+      </div>
+      <ul className="space-y-2">
+        {rankings.map((r) => {
+          const pick = pickByPidno.get(r.pidno);
+          return (
+            <CandidateRow
+              key={r.pidno}
+              ranking={r}
+              checked={pick !== undefined}
+              isPrimary={pick?.isPrimary === true}
+              onToggle={() => onTogglePick(r.pidno)}
+              onSetPrimary={() => onSetPrimary(r.pidno)}
+            />
+          );
+        })}
+      </ul>
+      <div className="space-y-1.5">
+        <Label htmlFor="recon-notes">Notes</Label>
+        <textarea
+          id="recon-notes"
+          value={draftNotes}
+          onChange={(e) => onNotesChange(e.target.value)}
+          placeholder="(annotator comments)"
+          rows={3}
+          className="w-full text-sm rounded border border-input bg-background px-3 py-2 font-mono placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+        />
+      </div>
+    </div>
+  );
+}
+
+function CandidateRow({
+  ranking,
+  checked,
+  isPrimary,
+  onToggle,
+  onSetPrimary,
+}: {
+  ranking: Ranking;
+  checked: boolean;
+  isPrimary: boolean;
+  onToggle: () => void;
+  onSetPrimary: () => void;
+}) {
+  const [showReflexes, setShowReflexes] = useState(false);
+  const confidencePct =
+    ranking.confidence === null ? null : Math.round(ranking.confidence * 100);
+  return (
+    <li
+      className={cn(
+        "border rounded p-2.5 transition-colors",
+        checked
+          ? "border-emerald-300 bg-emerald-50/40"
+          : "border-border bg-card",
+      )}
+    >
+      <div className="flex items-start gap-2">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={onToggle}
+          aria-label={`select ${ranking.proto_form}`}
+          className="mt-1.5 h-4 w-4 cursor-pointer accent-emerald-600"
+        />
+        <button
+          type="button"
+          onClick={onSetPrimary}
+          aria-label={`mark ${ranking.proto_form} as primary`}
+          className={cn(
+            "mt-0.5 p-0.5 rounded-sm cursor-pointer transition-colors",
+            isPrimary
+              ? "text-amber-500 hover:text-amber-600"
+              : "text-stone-300 hover:text-amber-400",
+          )}
+        >
+          <Star
+            className={cn("h-4 w-4", isPrimary && "fill-amber-400")}
+          />
+        </button>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-mono text-[11px] text-muted-foreground tabular-nums">
+              #{ranking.rank}
+            </span>
+            <span className="font-mono font-medium text-sm">
+              {ranking.proto_form}
+            </span>
+            <span className="text-[11px] text-muted-foreground">
+              {ranking.proto_code}
+            </span>
+            {confidencePct !== null && (
+              <span className="text-[11px] text-muted-foreground tabular-nums">
+                {confidencePct}%
+              </span>
+            )}
+            {ranking.is_match && (
+              <Badge className="bg-emerald-50 text-emerald-700 border border-emerald-300 font-normal">
+                credible
+              </Badge>
+            )}
+          </div>
+          <p className="mt-1 text-xs text-foreground/90 leading-snug">
+            {ranking.rationale}
+          </p>
+          {ranking.gloss_text && (
+            <p className="mt-0.5 text-[11px] italic text-muted-foreground">
+              ‘{ranking.gloss_text}’
+            </p>
+          )}
+          {ranking.sample_reflexes.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowReflexes((v) => !v)}
+              className="mt-1 text-[10px] uppercase tracking-wide text-muted-foreground hover:text-foreground"
+            >
+              {showReflexes ? "hide" : "show"} reflexes (
+              {ranking.sample_reflexes.length})
+            </button>
+          )}
+          {showReflexes && (
+            <ul className="mt-1 space-y-0.5">
+              {ranking.sample_reflexes.map((r, idx) => (
+                <li
+                  key={idx}
+                  className="text-[11px] text-muted-foreground flex gap-2"
+                >
+                  <span className="w-16 flex-shrink-0">{r.language}</span>
+                  <span className="font-mono text-foreground">{r.form}</span>
+                  <span className="italic">‘{r.gloss_text}’</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </li>
+  );
+}
