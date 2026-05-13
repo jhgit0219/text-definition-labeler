@@ -426,13 +426,19 @@ function MissView({
 }
 
 function BrowseAcdLink({ entry }: { entry: Entry }) {
-  const firstLetter = (entry.text || "").trim().toLowerCase().charAt(0);
-  const letter =
-    firstLetter >= "a" && firstLetter <= "z" ? firstLetter : "a";
+  // Default the dictionary to the 2-letter prefix matching the entry's
+  // first two ASCII letters (e.g. "Babuy" -> "ba"). Falls back gracefully
+  // when the entry text doesn't have two ASCII letters.
+  const t = (entry.text || "").trim().toLowerCase();
+  const c0 = t.charAt(0);
+  const c1 = t.charAt(1);
+  const a = c0 >= "a" && c0 <= "z" ? c0 : "a";
+  const b = c1 >= "a" && c1 <= "z" ? c1 : "a";
+  const prefix = `${a}${b}`;
   return (
     <div className="pt-2 text-center">
       <Link
-        href={`/dictionary?entry_id=${entry.id}&letter=${letter}`}
+        href={`/dictionary?entry_id=${entry.id}&prefix=${prefix}`}
         className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground underline-offset-2 hover:underline"
       >
         <BookOpen className="h-3 w-3" />
