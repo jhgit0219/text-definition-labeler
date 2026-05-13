@@ -123,12 +123,13 @@ export function ReconstructionPanel({ entry }: Props) {
     return false;
   }, [draftPicks, draftNotes, savedSnapshot]);
 
-  async function onAttempt() {
-    if (state.kind !== "miss") return;
+  async function onAttempt(opts: { force?: boolean } = {}) {
+    if (state.kind !== "miss" && state.kind !== "done") return;
+    const targetEntry = state.entry;
     setRunning(true);
     try {
-      const data = await runReconstruction(state.entry.id);
-      if (activeEntryRef.current !== state.entry.id) return;
+      const data = await runReconstruction(targetEntry.id, opts);
+      if (activeEntryRef.current !== targetEntry.id) return;
       if (data.reconstruction) {
         const initialPicks: PickInput[] = data.picks.map((p) => ({
           pidno: p.pidno,
@@ -137,7 +138,7 @@ export function ReconstructionPanel({ entry }: Props) {
         setDraftPicks(initialPicks);
         setDraftNotes(data.entryNotes ?? "");
         setSavedSnapshot({ picks: initialPicks, notes: data.entryNotes ?? "" });
-        setState({ kind: "done", entry: state.entry, data });
+        setState({ kind: "done", entry: targetEntry, data });
       }
     } catch (err) {
       const msg =
@@ -146,7 +147,7 @@ export function ReconstructionPanel({ entry }: Props) {
           : err instanceof Error
             ? err.message
             : String(err);
-      setState({ kind: "error", entry: state.entry, message: msg });
+      setState({ kind: "error", entry: targetEntry, message: msg });
     } finally {
       setRunning(false);
     }
@@ -243,7 +244,7 @@ export function ReconstructionPanel({ entry }: Props) {
           <MissView
             entry={state.entry}
             spreadsheet={state.spreadsheet}
-            onAttempt={onAttempt}
+            onAttempt={() => onAttempt()}
             running={running}
           />
         )}
@@ -296,6 +297,18 @@ export function ReconstructionPanel({ entry }: Props) {
             onTogglePick={togglePick}
             onSetPrimary={setPrimary}
             onNotesChange={setDraftNotes}
+            onRerun={() => {
+              if (
+                draftPicks.length > 0 &&
+                !window.confirm(
+                  "Re-run the AI for this word? The current rankings will be replaced. Your existing picks stay attached even if their pidno isn't in the new ranking list.",
+                )
+              ) {
+                return;
+              }
+              onAttempt({ force: true });
+            }}
+            rerunning={running}
           />
         )}
       </div>
@@ -481,6 +494,8 @@ function DoneView({
   onTogglePick,
   onSetPrimary,
   onNotesChange,
+  onRerun,
+  rerunning,
 }: {
   data: ReconResponseDto;
   draftPicks: PickInput[];
@@ -488,6 +503,8 @@ function DoneView({
   onTogglePick: (pidno: number) => void;
   onSetPrimary: (pidno: number) => void;
   onNotesChange: (s: string) => void;
+  onRerun: () => void;
+  rerunning: boolean;
 }) {
   const recon = data.reconstruction!;
   const rankings = recon.rankings;
@@ -502,12 +519,34 @@ function DoneView({
       {data.spreadsheetProtos && (
         <SpreadsheetReferenceCard data={data.spreadsheetProtos} />
       )}
-      <div className="text-[11px] text-muted-foreground flex items-center gap-2 flex-wrap">
-        <span>{recon.modelId}</span>
-        <span>·</span>
-        <span>{recon.promptVersion}</span>
-        <span>·</span>
-        <span>{new Date(recon.computedAt).toLocaleDateString()}</span>
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-[11px] text-muted-foreground flex items-center gap-2 flex-wrap">
+          <span>{recon.modelId}</span>
+          <span>·</span>
+          <span>{recon.promptVersion}</span>
+          <span>·</span>
+          <span>{new Date(recon.computedAt).toLocaleDateString()}</span>
+        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onRerun}
+          disabled={rerunning}
+          className="text-xs text-muted-foreground hover:text-foreground"
+          title="Replace these rankings with a fresh AI run. Existing picks stay attached."
+        >
+          {rerunning ? (
+            <>
+              <Loader2 className="h-3 w-3 animate-spin" />
+              re-running…
+            </>
+          ) : (
+            <>
+              <Sparkles className="h-3 w-3" />
+              re-run with AI
+            </>
+          )}
+        </Button>
       </div>
       <ul className="space-y-2">
         {rankings.map((r) => {

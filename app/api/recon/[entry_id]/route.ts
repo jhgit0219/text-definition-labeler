@@ -268,7 +268,7 @@ class ServiceErrorResponse extends Error {
 }
 
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { entry_id: string } },
 ) {
   const entryId = parseEntryId(params.entry_id);
@@ -282,20 +282,26 @@ export async function POST(
   const text = normalizeText(entry.text);
   const gloss = normalizeGloss(entry.glossRaw);
 
-  // Pre-check: if a done row already exists, surface 409 so the caller can
-  // re-fetch via GET. Race-safe because of the UNIQUE constraint — but
-  // checking first gives a nicer error than catching a duplicate-key.
-  // Use strict lookup here so we don't 409 on a loose-match row that's
-  // really for a different gloss spelling.
-  const existing = await loadReconstructionStrict(text, gloss);
-  if (existing && existing.status === "done") {
-    return NextResponse.json(
-      {
-        error: "reconstruction already exists; refresh via GET",
-        reconstructionId: existing.id,
-      },
-      { status: 409 },
-    );
+  // ?force=1 means "re-run the AI even if a cached row exists" — used by
+  // the re-run-with-AI button when the annotator wants a fresh take on a
+  // word that already has rankings. Without it, an existing done row
+  // returns 409 so the caller refreshes via GET.
+  const forceParam = req.nextUrl.searchParams.get("force");
+  const force = forceParam === "1" || forceParam === "true";
+
+  if (!force) {
+    // Strict lookup so a loose-match row doesn't 409 a request that's
+    // really aimed at a different gloss spelling.
+    const existing = await loadReconstructionStrict(text, gloss);
+    if (existing && existing.status === "done") {
+      return NextResponse.json(
+        {
+          error: "reconstruction already exists; refresh via GET",
+          reconstructionId: existing.id,
+        },
+        { status: 409 },
+      );
+    }
   }
 
   let payload: RankingsPayload;
@@ -323,9 +329,16 @@ export async function POST(
     );
   }
 
-  // INSERT, taking the existing row on UNIQUE violation (the Python service
-  // also dual-writes; whichever lands first wins).
-  const [row] = await db
+  // Force re-run: UPDATE in place on conflict so the row's id (and the
+  // FKs from existing AI picks) survive. Non-force path: keep the
+  // existing row on conflict.
+  const conflictTarget = [
+    schema.reconstructions.text,
+    schema.reconstructions.gloss,
+    schema.reconstructions.modelId,
+    schema.reconstructions.promptVersion,
+  ];
+  const insert = db
     .insert(schema.reconstructions)
     .values({
       text,
@@ -336,21 +349,25 @@ export async function POST(
       rankings: payload.rankings,
       status: "done",
       errorMsg: null,
-    })
-    .onConflictDoNothing({
-      target: [
-        schema.reconstructions.text,
-        schema.reconstructions.gloss,
-        schema.reconstructions.modelId,
-        schema.reconstructions.promptVersion,
-      ],
-    })
-    .returning();
+    });
+  const [row] = await (force
+    ? insert.onConflictDoUpdate({
+        target: conflictTarget,
+        set: {
+          schemaVersion: payload.schema_version,
+          rankings: payload.rankings,
+          status: "done",
+          errorMsg: null,
+          computedAt: new Date(),
+        },
+      })
+    : insert.onConflictDoNothing({ target: conflictTarget })
+  ).returning();
 
   const saved = row ?? (await loadReconstructionStrict(text, gloss));
   const picks = await loadPicks(entryId);
   return NextResponse.json(
     toDto(entry, saved, picks, entry.notes, entry.spreadsheetProtos as SpreadsheetProtos | null),
-    { status: 201 },
+    { status: force ? 200 : 201 },
   );
 }

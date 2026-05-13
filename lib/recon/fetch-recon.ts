@@ -106,11 +106,24 @@ export async function fetchReconstruction(
   return body;
 }
 
-/** POST /api/recon/[entry_id] — "Attempt with AI"; may 409 if already done. */
+/**
+ * POST /api/recon/[entry_id] — "Attempt with AI".
+ *
+ * Default behavior 409s if a cached row already exists (caller should
+ * refresh via GET). Pass `force: true` to bypass the check and UPDATE the
+ * cached row with a fresh AI ranking — used by the re-run button when
+ * the annotator wants a new take on an already-ranked word. Existing AI
+ * picks survive because the reconstruction row's id (the FK target)
+ * doesn't change.
+ */
 export async function runReconstruction(
   entryId: number,
+  opts: { force?: boolean } = {},
 ): Promise<ReconResponseDto> {
-  const res = await fetch(`/api/recon/${entryId}`, { method: "POST" });
+  const url = opts.force
+    ? `/api/recon/${entryId}?force=1`
+    : `/api/recon/${entryId}`;
+  const res = await fetch(url, { method: "POST" });
   const body = await parseResponse<ReconResponseDto>(res);
   if (body.reconstruction) {
     RANKINGS_PAYLOAD.parse({
