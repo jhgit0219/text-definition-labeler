@@ -69,6 +69,18 @@ type PanelState =
       previous: PanelState | null;
     };
 
+/**
+ * Live AI reconstruction is feature-flagged. When the flag is off the
+ * "Attempt with AI" + "re-run with AI" affordances are replaced by a
+ * professional "service in preview" banner. Cached rows + the
+ * dictionary browse + manual picks continue to work either way.
+ *
+ * Set NEXT_PUBLIC_AI_RECONSTRUCTION_ENABLED=1 in the env to enable.
+ */
+const AI_RECONSTRUCTION_ENABLED =
+  process.env.NEXT_PUBLIC_AI_RECONSTRUCTION_ENABLED === "1" ||
+  process.env.NEXT_PUBLIC_AI_RECONSTRUCTION_ENABLED === "true";
+
 export function ReconstructionPanel({
   entry,
   onBrowseAcd,
@@ -509,21 +521,49 @@ function MissView({
           </span>
           .
         </p>
-        <Button onClick={onAttempt} disabled={running}>
-          {running ? (
-            <>
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              Calling AI…
-            </>
-          ) : (
-            <>
-              <Sparkles className="h-3.5 w-3.5" />
-              Attempt with AI
-            </>
-          )}
-        </Button>
+        {AI_RECONSTRUCTION_ENABLED ? (
+          <Button onClick={onAttempt} disabled={running}>
+            {running ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Calling AI…
+              </>
+            ) : (
+              <>
+                <Sparkles className="h-3.5 w-3.5" />
+                Attempt with AI
+              </>
+            )}
+          </Button>
+        ) : (
+          <AiPreviewBanner />
+        )}
       </div>
       <BrowseAcdLink entry={entry} onBrowseAcd={onBrowseAcd} />
+    </div>
+  );
+}
+
+/**
+ * Rendered in place of the AI-call CTAs when the feature flag is off.
+ * Explains the gating without sounding broken, and points the annotator
+ * at the ACD browse path which remains fully functional.
+ */
+function AiPreviewBanner() {
+  return (
+    <div className="rounded-md border border-amber-200 bg-amber-50/60 px-3 py-2.5 text-left">
+      <div className="flex items-start gap-2">
+        <Sparkles className="h-3.5 w-3.5 text-amber-700 flex-shrink-0 mt-0.5" />
+        <div className="space-y-1">
+          <p className="text-xs font-semibold text-amber-900">
+            AI reconstruction is in preview
+          </p>
+          <p className="text-[11px] text-amber-900/80 leading-snug">
+            Cached reconstructions remain available. For words without one
+            yet, use the dictionary browse below to attach a pick by hand.
+          </p>
+        </div>
+      </div>
     </div>
   );
 }
@@ -692,26 +732,28 @@ function DoneView({
           <span>·</span>
           <span>{new Date(recon.computedAt).toLocaleDateString()}</span>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onRerun}
-          disabled={rerunning}
-          className="text-xs text-muted-foreground hover:text-foreground"
-          title="Replace these rankings with a fresh AI run. Existing picks stay attached."
-        >
-          {rerunning ? (
-            <>
-              <Loader2 className="h-3 w-3 animate-spin" />
-              re-running…
-            </>
-          ) : (
-            <>
-              <Sparkles className="h-3 w-3" />
-              re-run with AI
-            </>
-          )}
-        </Button>
+        {AI_RECONSTRUCTION_ENABLED && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onRerun}
+            disabled={rerunning}
+            className="text-xs text-muted-foreground hover:text-foreground"
+            title="Replace these rankings with a fresh AI run. Existing picks stay attached."
+          >
+            {rerunning ? (
+              <>
+                <Loader2 className="h-3 w-3 animate-spin" />
+                re-running…
+              </>
+            ) : (
+              <>
+                <Sparkles className="h-3 w-3" />
+                re-run with AI
+              </>
+            )}
+          </Button>
+        )}
       </div>
       {manualOrphanPicks.length > 0 && (
         <section className="space-y-1.5">
