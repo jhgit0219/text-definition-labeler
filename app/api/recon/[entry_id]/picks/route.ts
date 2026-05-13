@@ -46,6 +46,7 @@ interface PickDto {
 }
 
 interface ReconResponseDto {
+  entry: { id: number; text: string; glossRaw: string; state: string };
   reconstruction: {
     id: number;
     text: string;
@@ -68,11 +69,18 @@ function parseEntryId(raw: string): number | null {
 }
 
 function toReconDto(
+  entry: { id: number; text: string; glossRaw: string; state: string },
   row: ReconstructionRow,
   picks: PickRow[],
   entryNotes: string | null,
 ): ReconResponseDto {
   return {
+    entry: {
+      id: entry.id,
+      text: entry.text,
+      glossRaw: entry.glossRaw,
+      state: entry.state,
+    },
     reconstruction: {
       id: row.id,
       text: row.text,
@@ -128,6 +136,7 @@ export async function PUT(
       id: schema.entries.id,
       text: schema.entries.text,
       glossRaw: schema.entries.glossRaw,
+      state: schema.entries.state,
     })
     .from(schema.entries)
     .where(eq(schema.entries.id, entryId));
@@ -226,5 +235,5 @@ export async function PUT(
     .from(schema.entryReconstructionPicks)
     .where(eq(schema.entryReconstructionPicks.entryId, entryId));
 
-  return NextResponse.json(toReconDto(recon, picks, body.notes));
+  return NextResponse.json(toReconDto(entry, recon, picks, body.notes));
 }

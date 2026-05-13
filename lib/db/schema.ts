@@ -132,12 +132,19 @@ export const entryReconstructionPicks = pgTable(
     entryId: integer("entry_id")
       .notNull()
       .references(() => entries.id, { onDelete: "cascade" }),
-    reconstructionId: integer("reconstruction_id")
-      .notNull()
-      .references(() => reconstructions.id),
+    // Nullable because picks can originate from two paths:
+    //   (a) AI ranking — reconstructionId set, pointing at the rankings row
+    //       the candidate came from
+    //   (b) manual browse-ACD — reconstructionId is null; the annotator
+    //       picked the proto-form directly from /dictionary without an
+    //       AI ranking backing it
+    reconstructionId: integer("reconstruction_id").references(
+      () => reconstructions.id,
+    ),
     pidno: integer("pidno").notNull(),
     protoForm: text("proto_form").notNull(),
     isPrimary: boolean("is_primary").notNull().default(true),
+    source: varchar("source", { length: 16 }).notNull().default("ai"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
@@ -148,3 +155,65 @@ export const entryReconstructionPicks = pgTable(
 
 export type EntryReconstructionPick = typeof entryReconstructionPicks.$inferSelect;
 export type NewEntryReconstructionPick = typeof entryReconstructionPicks.$inferInsert;
+
+/**
+ * Full ACD reconstruction corpus, imported once from the parsed CSVs in
+ * the sibling bisaya-reconstruction repo (~12K rows). Used by the
+ * /dictionary route's letter-by-letter browse view.
+ *
+ * Distinct from `reconstructions` (the AI rankings cache): that table
+ * stores ranked candidate LISTS produced by the agent per (text, gloss);
+ * this table stores the underlying canonical reconstructions themselves,
+ * one row per ACD entry. The agent's ranked candidates reference these
+ * via `pidno`.
+ *
+ * `firstLetter` is a denormalized lowercase ASCII initial of `formPlain`,
+ * computed at import time. Lets the browse view filter by letter without
+ * a regex lambda on every query.
+ */
+export const acdReconstructions = pgTable(
+  "acd_reconstructions",
+  {
+    pidno: integer("pidno").primaryKey(),
+    protoCode: text("proto_code").notNull(),
+    form: text("form").notNull(),
+    formPlain: text("form_plain").notNull(),
+    glossText: text("gloss_text").notNull(),
+    setNum: integer("set_num").notNull(),
+    firstLetter: varchar("first_letter", { length: 4 }).notNull(),
+  },
+  (t) => ({
+    firstLetterIdx: index("acd_recon_first_letter_idx").on(t.firstLetter),
+    setNumIdx: index("acd_recon_set_num_idx").on(t.setNum),
+    formPlainIdx: index("acd_recon_form_plain_idx").on(t.formPlain),
+  }),
+);
+
+export type AcdReconstruction = typeof acdReconstructions.$inferSelect;
+export type NewAcdReconstruction = typeof acdReconstructions.$inferInsert;
+
+/**
+ * Daughter-language reflexes for each ACD reconstruction. ~107K rows.
+ * Loaded on-demand when the annotator expands a reconstruction in the
+ * /dictionary view.
+ */
+export const acdReflexes = pgTable(
+  "acd_reflexes",
+  {
+    id: serial("id").primaryKey(),
+    pidno: integer("pidno")
+      .notNull()
+      .references(() => acdReconstructions.pidno, { onDelete: "cascade" }),
+    languageName: text("language_name").notNull(),
+    form: text("form").notNull(),
+    formPlain: text("form_plain").notNull(),
+    glossText: text("gloss_text").notNull(),
+    position: integer("position").notNull().default(0),
+  },
+  (t) => ({
+    pidnoIdx: index("acd_reflex_pidno_idx").on(t.pidno),
+  }),
+);
+
+export type AcdReflex = typeof acdReflexes.$inferSelect;
+export type NewAcdReflex = typeof acdReflexes.$inferInsert;

@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Star, Sparkles, RefreshCw, AlertCircle, Loader2 } from "lucide-react";
+import { Star, Sparkles, RefreshCw, AlertCircle, Loader2, BookOpen } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -406,6 +407,24 @@ function MissView({
           )}
         </Button>
       </div>
+      <BrowseAcdLink entry={entry} />
+    </div>
+  );
+}
+
+function BrowseAcdLink({ entry }: { entry: Entry }) {
+  const firstLetter = (entry.text || "").trim().toLowerCase().charAt(0);
+  const letter =
+    firstLetter >= "a" && firstLetter <= "z" ? firstLetter : "a";
+  return (
+    <div className="pt-2 text-center">
+      <Link
+        href={`/dictionary?entry_id=${entry.id}&letter=${letter}`}
+        className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground underline-offset-2 hover:underline"
+      >
+        <BookOpen className="h-3 w-3" />
+        Nothing matches? Browse the full ACD →
+      </Link>
     </div>
   );
 }
@@ -516,6 +535,12 @@ function DoneView({
           className="w-full text-sm rounded border border-input bg-background px-3 py-2 font-mono placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
         />
       </div>
+      {data.entry && <BrowseAcdLink entry={{
+        id: data.entry.id,
+        text: data.entry.text,
+        glossRaw: data.entry.glossRaw,
+        state: data.entry.state,
+      }} />}
     </div>
   );
 }

@@ -47,6 +47,12 @@ export interface SpreadsheetProtos {
 }
 
 interface ReconResponseDto {
+  entry: {
+    id: number;
+    text: string;
+    glossRaw: string;
+    state: string;
+  };
   reconstruction: {
     id: number;
     text: string;
@@ -84,6 +90,7 @@ function parseEntryId(raw: string): number | null {
 }
 
 function toDto(
+  entry: { id: number; text: string; glossRaw: string; state: string },
   row: ReconstructionRow | null,
   picks: PickRow[],
   entryNotes: string | null,
@@ -91,6 +98,12 @@ function toDto(
   looseMatch = false,
 ): ReconResponseDto {
   return {
+    entry: {
+      id: entry.id,
+      text: entry.text,
+      glossRaw: entry.glossRaw,
+      state: entry.state,
+    },
     reconstruction: row
       ? {
           id: row.id,
@@ -123,6 +136,7 @@ async function loadEntry(entryId: number) {
       id: schema.entries.id,
       text: schema.entries.text,
       glossRaw: schema.entries.glossRaw,
+      state: schema.entries.state,
       notes: schema.entries.notes,
       spreadsheetProtos: schema.entries.spreadsheetProtos,
     })
@@ -199,7 +213,7 @@ export async function GET(
   const { row: recon, looseMatch } = await loadReconstructionWithFallback(text, gloss);
   const picks = await loadPicks(entryId);
   return NextResponse.json(
-    toDto(recon, picks, entry.notes, entry.spreadsheetProtos as SpreadsheetProtos | null, looseMatch),
+    toDto(entry, recon, picks, entry.notes, entry.spreadsheetProtos as SpreadsheetProtos | null, looseMatch),
   );
 }
 
@@ -336,7 +350,7 @@ export async function POST(
   const saved = row ?? (await loadReconstructionStrict(text, gloss));
   const picks = await loadPicks(entryId);
   return NextResponse.json(
-    toDto(saved, picks, entry.notes, entry.spreadsheetProtos as SpreadsheetProtos | null),
+    toDto(entry, saved, picks, entry.notes, entry.spreadsheetProtos as SpreadsheetProtos | null),
     { status: 201 },
   );
 }
