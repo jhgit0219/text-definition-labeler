@@ -11,6 +11,7 @@ import {
   RefreshCw,
   Sparkles,
   Star,
+  X,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -103,6 +104,7 @@ export function ReconstructionPanel({ entry }: Props) {
         const initialPicks: PickInput[] = data.picks.map((p) => ({
           pidno: p.pidno,
           isPrimary: p.isPrimary,
+          source: p.source,
         }));
         setDraftPicks(initialPicks);
         setDraftNotes(data.entryNotes ?? "");
@@ -126,7 +128,11 @@ export function ReconstructionPanel({ entry }: Props) {
     const a = sortPicks(draftPicks);
     const b = sortPicks(savedSnapshot.picks);
     for (let i = 0; i < a.length; i++) {
-      if (a[i].pidno !== b[i].pidno || a[i].isPrimary !== b[i].isPrimary) {
+      if (
+        a[i].pidno !== b[i].pidno ||
+        a[i].isPrimary !== b[i].isPrimary ||
+        (a[i].source ?? "ai") !== (b[i].source ?? "ai")
+      ) {
         return true;
       }
     }
@@ -144,6 +150,7 @@ export function ReconstructionPanel({ entry }: Props) {
         const initialPicks: PickInput[] = data.picks.map((p) => ({
           pidno: p.pidno,
           isPrimary: p.isPrimary,
+          source: p.source,
         }));
         setDraftPicks(initialPicks);
         setDraftNotes(data.entryNotes ?? "");
@@ -171,6 +178,7 @@ export function ReconstructionPanel({ entry }: Props) {
       const initialPicks: PickInput[] = data.picks.map((p) => ({
         pidno: p.pidno,
         isPrimary: p.isPrimary,
+        source: p.source,
       }));
       setSavedSnapshot({ picks: initialPicks, notes: data.entryNotes ?? "" });
       setSavedFlash(true);
@@ -196,9 +204,11 @@ export function ReconstructionPanel({ entry }: Props) {
         return next;
       }
       // Adding: first pick is primary; subsequent picks aren't unless they
-      // tap the star.
+      // tap the star. Source defaults to "ai" here — togglePick is wired
+      // to the AI-candidate row in the panel, so it only adds AI picks.
+      // Manual picks land via the /dictionary append endpoint.
       const isPrimary = prev.length === 0;
-      return [...prev, { pidno, isPrimary }];
+      return [...prev, { pidno, isPrimary, source: "ai" }];
     });
   }
 
@@ -209,10 +219,24 @@ export function ReconstructionPanel({ entry }: Props) {
         // Starring an unchecked candidate also checks it.
         return [
           ...prev.map((p) => ({ ...p, isPrimary: false })),
-          { pidno, isPrimary: true },
+          { pidno, isPrimary: true, source: "ai" as const },
         ];
       }
       return prev.map((p) => ({ ...p, isPrimary: p.pidno === pidno }));
+    });
+  }
+
+  // Drop a manual pick from the entry's pick set. Used by the
+  // "manual picks" section that shows ACD-browse picks; they don't
+  // have a checkbox in the AI candidate list to untick.
+  function removeManualPick(pidno: number) {
+    setDraftPicks((prev) => {
+      const removed = prev.find((p) => p.pidno === pidno);
+      const next = prev.filter((p) => p.pidno !== pidno);
+      if (removed?.isPrimary && next.length > 0 && !next.some((p) => p.isPrimary)) {
+        next[0] = { ...next[0], isPrimary: true };
+      }
+      return next;
     });
   }
 
@@ -273,6 +297,7 @@ export function ReconstructionPanel({ entry }: Props) {
                     const initialPicks: PickInput[] = data.picks.map((p) => ({
                       pidno: p.pidno,
                       isPrimary: p.isPrimary,
+                      source: p.source,
                     }));
                     setDraftPicks(initialPicks);
                     setDraftNotes(data.entryNotes ?? "");
@@ -306,6 +331,7 @@ export function ReconstructionPanel({ entry }: Props) {
             draftNotes={draftNotes}
             onTogglePick={togglePick}
             onSetPrimary={setPrimary}
+            onRemoveManualPick={removeManualPick}
             onNotesChange={setDraftNotes}
             onRerun={() => {
               if (
@@ -509,6 +535,7 @@ function DoneView({
   draftNotes,
   onTogglePick,
   onSetPrimary,
+  onRemoveManualPick,
   onNotesChange,
   onRerun,
   rerunning,
@@ -518,6 +545,7 @@ function DoneView({
   draftNotes: string;
   onTogglePick: (pidno: number) => void;
   onSetPrimary: (pidno: number) => void;
+  onRemoveManualPick: (pidno: number) => void;
   onNotesChange: (s: string) => void;
   onRerun: () => void;
   rerunning: boolean;
@@ -529,6 +557,31 @@ function DoneView({
     for (const p of draftPicks) m.set(p.pidno, p);
     return m;
   }, [draftPicks]);
+  // Manual picks (added via /dictionary) whose pidno does NOT appear in
+  // the AI rankings. These render in their own section so they stay
+  // visible even though there's no AI candidate row to "check". Picks
+  // whose pidno IS in the rankings continue to render as a ticked AI
+  // candidate, regardless of source — same UX as before.
+  const aiPidnos = useMemo(
+    () => new Set(rankings.map((r) => r.pidno)),
+    [rankings],
+  );
+  const manualOrphanPicks = useMemo(() => {
+    // Find each manual pick's protoForm from the original data.picks
+    // (we don't carry protoForm in PickInput because the AI rankings
+    // already have it; for orphans we need the denormalized value).
+    const byPidno = new Map(data.picks.map((p) => [p.pidno, p]));
+    return draftPicks
+      .filter((p) => p.source === "manual" && !aiPidnos.has(p.pidno))
+      .map((p) => {
+        const original = byPidno.get(p.pidno);
+        return {
+          pidno: p.pidno,
+          isPrimary: p.isPrimary,
+          protoForm: original?.protoForm ?? `pidno ${p.pidno}`,
+        };
+      });
+  }, [draftPicks, aiPidnos, data.picks]);
 
   return (
     <div className="px-4 py-4 space-y-4">
@@ -564,6 +617,28 @@ function DoneView({
           )}
         </Button>
       </div>
+      {manualOrphanPicks.length > 0 && (
+        <section className="space-y-1.5">
+          <h4 className="text-xs uppercase tracking-wide font-semibold text-muted-foreground">
+            From ACD browse{" "}
+            <span className="font-normal opacity-70">
+              ({manualOrphanPicks.length})
+            </span>
+          </h4>
+          <ul className="space-y-1.5">
+            {manualOrphanPicks.map((p) => (
+              <ManualPickRow
+                key={p.pidno}
+                pidno={p.pidno}
+                protoForm={p.protoForm}
+                isPrimary={p.isPrimary}
+                onRemove={() => onRemoveManualPick(p.pidno)}
+                onSetPrimary={() => onSetPrimary(p.pidno)}
+              />
+            ))}
+          </ul>
+        </section>
+      )}
       <ul className="space-y-2">
         {rankings.map((r) => {
           const pick = pickByPidno.get(r.pidno);
@@ -605,6 +680,59 @@ interface FullReflex {
   form: string;
   gloss_text: string;
   subgroupCode: string;
+}
+
+/**
+ * A pick from the /dictionary browse path whose pidno isn't in the AI's
+ * candidate list. Rendered as its own minimal card with proto-form,
+ * primary toggle, and remove button — distinct visual from the
+ * AI-candidate rows so the annotator can tell at a glance which picks
+ * came from where.
+ */
+function ManualPickRow({
+  pidno,
+  protoForm,
+  isPrimary,
+  onRemove,
+  onSetPrimary,
+}: {
+  pidno: number;
+  protoForm: string;
+  isPrimary: boolean;
+  onRemove: () => void;
+  onSetPrimary: () => void;
+}) {
+  return (
+    <li className="border border-emerald-300 bg-emerald-50/40 rounded p-2 flex items-center gap-2">
+      <button
+        type="button"
+        onClick={onSetPrimary}
+        aria-label={`mark ${protoForm} as primary`}
+        className={cn(
+          "p-0.5 rounded-sm cursor-pointer transition-colors flex-shrink-0",
+          isPrimary
+            ? "text-amber-500 hover:text-amber-600"
+            : "text-stone-300 hover:text-amber-400",
+        )}
+      >
+        <Star className={cn("h-4 w-4", isPrimary && "fill-amber-400")} />
+      </button>
+      <span className="font-mono font-medium text-sm flex-1 min-w-0 truncate">
+        {protoForm}
+      </span>
+      <span className="text-[11px] text-muted-foreground tabular-nums flex-shrink-0">
+        pidno {pidno}
+      </span>
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label={`remove ${protoForm}`}
+        className="p-0.5 rounded-sm text-muted-foreground hover:text-rose-600 transition-colors flex-shrink-0"
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
+    </li>
+  );
 }
 
 function CandidateRow({

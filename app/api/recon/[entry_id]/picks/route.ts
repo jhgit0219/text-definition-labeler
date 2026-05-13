@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 
 import { db, schema } from "@/lib/db";
@@ -28,6 +28,11 @@ const CANONICAL_PROMPT_VERSION = "v2-agent";
 const pickInputSchema = z.object({
   pidno: z.number().int(),
   isPrimary: z.boolean(),
+  // Optional in the body — defaults to "ai" since the recon panel's
+  // candidate list (the original PUT consumer) is the AI-source path.
+  // Manual picks made via the /dictionary flow that the annotator
+  // later edits via Save retain "manual" by passing it explicitly.
+  source: z.enum(["ai", "manual"]).optional(),
 });
 
 const bodySchema = z.object({
@@ -43,6 +48,7 @@ interface PickDto {
   pidno: number;
   protoForm: string;
   isPrimary: boolean;
+  source: "ai" | "manual";
 }
 
 interface ReconResponseDto {
@@ -114,6 +120,7 @@ function toReconDto(
       pidno: p.pidno,
       protoForm: p.protoForm,
       isPrimary: p.isPrimary,
+      source: (p.source === "manual" ? "manual" : "ai") as "ai" | "manual",
     })),
     entryNotes,
   };
@@ -206,24 +213,55 @@ export async function PUT(
     );
   }
 
-  // Validate every pidno against the rankings JSONB; collect the denormalized
-  // protoForm for each so we can write it directly into the pick row.
+  // Each pick carries an optional source. AI picks (default) must appear
+  // in the reconstruction's rankings JSONB. Manual picks must instead
+  // exist in the full ACD corpus (acd_reconstructions); they came in via
+  // the /dictionary browse path and don't necessarily appear in the AI's
+  // shortlist. Look up proto-form denormalization in whichever table
+  // applies so the pick row can be inserted with proto_form populated.
   const rankings = (recon.rankings as Ranking[]) ?? [];
-  const protoByPidno = new Map<number, string>();
+  const protoByAiPidno = new Map<number, string>();
   for (const r of rankings) {
-    protoByPidno.set(r.pidno, r.proto_form);
+    protoByAiPidno.set(r.pidno, r.proto_form);
   }
+  const manualPidnos = body.picks
+    .filter((p) => p.source === "manual")
+    .map((p) => p.pidno);
+  const acdRows =
+    manualPidnos.length === 0
+      ? []
+      : await db
+          .select({
+            pidno: schema.acdReconstructions.pidno,
+            form: schema.acdReconstructions.form,
+          })
+          .from(schema.acdReconstructions)
+          .where(inArray(schema.acdReconstructions.pidno, manualPidnos));
+  const protoByManualPidno = new Map<number, string>(
+    acdRows.map((r) => [r.pidno, r.form]),
+  );
   for (const p of body.picks) {
-    if (!protoByPidno.has(p.pidno)) {
+    const source = p.source ?? "ai";
+    if (source === "ai" && !protoByAiPidno.has(p.pidno)) {
       return NextResponse.json(
-        { error: `pidno ${p.pidno} is not in this reconstruction's rankings` },
+        {
+          error: `AI pick pidno ${p.pidno} is not in this reconstruction's rankings`,
+        },
+        { status: 400 },
+      );
+    }
+    if (source === "manual" && !protoByManualPidno.has(p.pidno)) {
+      return NextResponse.json(
+        { error: `manual pick pidno ${p.pidno} not found in ACD corpus` },
         { status: 400 },
       );
     }
   }
 
-  // Transactional replace: delete all picks for this entry, insert the new
-  // set, update the entry's notes. drizzle-orm/postgres-js exposes db.transaction.
+  // Transactional replace: delete all picks for this entry then re-insert
+  // the unified set carrying the annotator's full pick state (AI + manual).
+  // Source is preserved per pick so a later read can re-render the two
+  // groups separately in the panel.
   await db.transaction(async (tx) => {
     await tx
       .delete(schema.entryReconstructionPicks)
@@ -231,13 +269,21 @@ export async function PUT(
 
     if (body.picks.length > 0) {
       await tx.insert(schema.entryReconstructionPicks).values(
-        body.picks.map((p) => ({
-          entryId,
-          reconstructionId: recon.id,
-          pidno: p.pidno,
-          protoForm: protoByPidno.get(p.pidno) ?? "",
-          isPrimary: p.isPrimary,
-        })),
+        body.picks.map((p) => {
+          const source = p.source ?? "ai";
+          const protoForm =
+            source === "ai"
+              ? protoByAiPidno.get(p.pidno) ?? ""
+              : protoByManualPidno.get(p.pidno) ?? "";
+          return {
+            entryId,
+            reconstructionId: source === "ai" ? recon.id : null,
+            pidno: p.pidno,
+            protoForm,
+            isPrimary: p.isPrimary,
+            source,
+          };
+        }),
       );
     }
 

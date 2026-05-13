@@ -18,6 +18,15 @@ export interface ReconstructionPickDto {
   pidno: number;
   protoForm: string;
   isPrimary: boolean;
+  /**
+   * Where the pick came from. "ai" = ticked in the recon panel's
+   * candidate list (the AI ranking shortlist). "manual" = added from
+   * the /dictionary browse path, which means the pidno may NOT appear
+   * in the current rankings JSONB. The UI renders the two sources in
+   * separate sections so manual picks stay visible even when they have
+   * no matching AI candidate row.
+   */
+  source: "ai" | "manual";
 }
 
 /**
@@ -155,6 +164,8 @@ export async function runReconstruction(
 export interface PickInput {
   pidno: number;
   isPrimary: boolean;
+  /** Defaults to "ai" server-side; pass explicitly for manual picks. */
+  source?: "ai" | "manual";
 }
 
 export async function savePicks(

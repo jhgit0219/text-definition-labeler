@@ -90,6 +90,7 @@ interface ReconResponseDto {
     pidno: number;
     protoForm: string;
     isPrimary: boolean;
+    source: "ai" | "manual";
   }[];
   entryNotes: string | null;
   spreadsheetProtos: SpreadsheetProtos | null;
@@ -148,6 +149,7 @@ function toDto(
       pidno: p.pidno,
       protoForm: p.protoForm,
       isPrimary: p.isPrimary,
+      source: (p.source === "manual" ? "manual" : "ai") as "ai" | "manual",
     })),
     entryNotes,
     spreadsheetProtos,
