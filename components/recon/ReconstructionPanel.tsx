@@ -807,18 +807,28 @@ function CandidateRow({
                     </button>
                     {!collapsed && (
                       <ul className="mt-1 space-y-1 pl-4">
+                        {/* Grid with fixed track widths — was a flex row
+                            where `w-24 whitespace-nowrap` let long
+                            language names overflow visually into the
+                            form column. Grid tracks clip the column at
+                            the declared width and let the content break
+                            instead. */}
                         {g.reflexes.map((r, idx) => (
                           <li
                             key={idx}
-                            className="text-xs text-muted-foreground flex gap-2 leading-snug"
+                            className="text-xs text-muted-foreground grid gap-2 leading-snug"
+                            style={{
+                              gridTemplateColumns:
+                                "minmax(0, 7rem) minmax(0, 5rem) minmax(0, 1fr)",
+                            }}
                           >
-                            <span className="w-24 flex-shrink-0 whitespace-nowrap">
-                              {r.language}
-                            </span>
-                            <span className="font-mono text-foreground whitespace-nowrap">
+                            <span className="break-words">{r.language}</span>
+                            <span className="font-mono text-foreground break-words">
                               {r.form}
                             </span>
-                            <span className="italic">‘{r.gloss_text}’</span>
+                            <span className="italic break-words">
+                              ‘{r.gloss_text}’
+                            </span>
                           </li>
                         ))}
                       </ul>

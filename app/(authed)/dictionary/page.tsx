@@ -552,20 +552,30 @@ function AcdRowItem({
                           </span>
                         </button>
                         {!collapsed && (
-                          <table className="text-sm w-full">
+                          <table className="text-sm w-full table-fixed">
+                            {/* table-fixed + colgroup makes the column
+                                widths authoritative; without them, long
+                                language names like "Proto-South Sulawesi"
+                                expanded their cell past the declared
+                                width and overlapped the form column. */}
+                            <colgroup>
+                              <col className="w-48" />
+                              <col className="w-32" />
+                              <col />
+                            </colgroup>
                             <tbody>
                               {group.reflexes.map((rx) => (
                                 <tr
                                   key={rx.id}
                                   className="align-top leading-snug"
                                 >
-                                  <td className="w-36 pr-3 text-muted-foreground whitespace-nowrap py-0.5">
+                                  <td className="pr-4 text-muted-foreground py-1 break-words">
                                     {rx.languageName}
                                   </td>
-                                  <td className="w-32 pr-3 font-mono text-foreground whitespace-nowrap py-0.5">
+                                  <td className="pr-4 font-mono text-foreground py-1 break-words">
                                     {rx.form}
                                   </td>
-                                  <td className="italic text-muted-foreground py-0.5">
+                                  <td className="italic text-muted-foreground py-1 break-words">
                                     ‘{rx.glossText}’
                                   </td>
                                 </tr>
