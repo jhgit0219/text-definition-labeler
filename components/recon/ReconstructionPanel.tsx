@@ -590,6 +590,12 @@ function DoneView({
   );
 }
 
+interface FullReflex {
+  language: string;
+  form: string;
+  gloss_text: string;
+}
+
 function CandidateRow({
   ranking,
   checked,
@@ -597,15 +603,58 @@ function CandidateRow({
   onToggle,
   onSetPrimary,
 }: {
-  ranking: Ranking;
+  ranking: Ranking & { totalReflexCount?: number };
   checked: boolean;
   isPrimary: boolean;
   onToggle: () => void;
   onSetPrimary: () => void;
 }) {
   const [showReflexes, setShowReflexes] = useState(false);
+  // Full reflex list from acd_reflexes (the full ACD corpus), loaded
+  // lazily on first expand. Distinct from ranking.sample_reflexes, which
+  // is the agent's capped-at-5 sample stored in the rankings JSONB.
+  const [fullReflexes, setFullReflexes] = useState<FullReflex[] | null>(null);
+  const [reflexLoading, setReflexLoading] = useState(false);
+  const totalCount = ranking.totalReflexCount ?? ranking.sample_reflexes.length;
   const confidencePct =
     ranking.confidence === null ? null : Math.round(ranking.confidence * 100);
+
+  async function toggleReflexes() {
+    if (showReflexes) {
+      setShowReflexes(false);
+      return;
+    }
+    setShowReflexes(true);
+    if (fullReflexes === null && !reflexLoading && totalCount > 0) {
+      setReflexLoading(true);
+      try {
+        const res = await fetch(`/api/acd/reconstruction/${ranking.pidno}`);
+        if (res.ok) {
+          const body = await res.json();
+          const reflexes: FullReflex[] = (body.reflexes ?? []).map(
+            (r: { languageName: string; form: string; glossText: string }) => ({
+              language: r.languageName,
+              form: r.form,
+              gloss_text: r.glossText,
+            }),
+          );
+          setFullReflexes(reflexes);
+        } else {
+          // Fall back to the sample if the corpus endpoint fails (e.g.
+          // pidno not in acd_reconstructions — shouldn't happen with the
+          // iter-2 import but keep the panel usable either way).
+          setFullReflexes(ranking.sample_reflexes);
+        }
+      } finally {
+        setReflexLoading(false);
+      }
+    }
+  }
+
+  const reflexesToRender =
+    fullReflexes !== null && fullReflexes.length > 0
+      ? fullReflexes
+      : ranking.sample_reflexes;
   return (
     <li
       className={cn(
@@ -668,24 +717,30 @@ function CandidateRow({
               ‘{ranking.gloss_text}’
             </p>
           )}
-          {ranking.sample_reflexes.length > 0 && (
+          {totalCount > 0 && (
             <button
               type="button"
-              onClick={() => setShowReflexes((v) => !v)}
+              onClick={toggleReflexes}
               className="mt-1 text-[10px] uppercase tracking-wide text-muted-foreground hover:text-foreground"
             >
-              {showReflexes ? "hide" : "show"} reflexes (
-              {ranking.sample_reflexes.length})
+              {showReflexes ? "hide" : "show"} {totalCount} reflex
+              {totalCount === 1 ? "" : "es"}
             </button>
           )}
-          {showReflexes && (
+          {showReflexes && reflexLoading && (
+            <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              loading reflexes…
+            </div>
+          )}
+          {showReflexes && !reflexLoading && (
             <ul className="mt-1 space-y-0.5">
-              {ranking.sample_reflexes.map((r, idx) => (
+              {reflexesToRender.map((r, idx) => (
                 <li
                   key={idx}
                   className="text-[11px] text-muted-foreground flex gap-2"
                 >
-                  <span className="w-16 flex-shrink-0">{r.language}</span>
+                  <span className="w-24 flex-shrink-0">{r.language}</span>
                   <span className="font-mono text-foreground">{r.form}</span>
                   <span className="italic">‘{r.gloss_text}’</span>
                 </li>

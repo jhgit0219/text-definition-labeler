@@ -20,6 +20,14 @@ export interface ReconstructionPickDto {
   isPrimary: boolean;
 }
 
+/**
+ * A `Ranking` from the schema plus the true total reflex count for that
+ * pidno in the ACD corpus. The agent's stored `sample_reflexes` array is
+ * capped at 5 by the iter-5 ranker — `totalReflexCount` is the truth
+ * read from `acd_reflexes` at GET time.
+ */
+export type RankingWithCount = Ranking & { totalReflexCount: number };
+
 export interface ReconstructionRowDto {
   id: number;
   text: string;
@@ -27,7 +35,7 @@ export interface ReconstructionRowDto {
   modelId: string;
   promptVersion: string;
   schemaVersion: number;
-  rankings: Ranking[];
+  rankings: RankingWithCount[];
   status: "queued" | "done" | "error";
   errorMsg: string | null;
   computedAt: string; // ISO timestamp

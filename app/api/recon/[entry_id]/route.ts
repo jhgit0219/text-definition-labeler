@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 
 import { db, schema } from "@/lib/db";
 import { normalizeText, normalizeGloss } from "@/lib/recon/normalize";
@@ -60,7 +60,16 @@ interface ReconResponseDto {
     modelId: string;
     promptVersion: string;
     schemaVersion: number;
-    rankings: Ranking[];
+    rankings: (Ranking & {
+      /**
+       * Total reflex count for this pidno in the full ACD corpus
+       * (acd_reflexes table). Distinct from sample_reflexes.length,
+       * which was capped at 5 by the agent at ranking-time to keep its
+       * tool-result payloads tight. The UI surfaces this so the reflex
+       * count badge reflects truth, not the sample subset.
+       */
+      totalReflexCount: number;
+    })[];
     status: string;
     errorMsg: string | null;
     computedAt: string;
@@ -95,6 +104,7 @@ function toDto(
   picks: PickRow[],
   entryNotes: string | null,
   spreadsheetProtos: SpreadsheetProtos | null,
+  reflexCountByPidno: Map<number, number>,
   looseMatch = false,
 ): ReconResponseDto {
   return {
@@ -112,7 +122,10 @@ function toDto(
           modelId: row.modelId,
           promptVersion: row.promptVersion,
           schemaVersion: row.schemaVersion,
-          rankings: row.rankings as Ranking[],
+          rankings: (row.rankings as Ranking[]).map((r) => ({
+            ...r,
+            totalReflexCount: reflexCountByPidno.get(r.pidno) ?? 0,
+          })),
           status: row.status,
           errorMsg: row.errorMsg,
           computedAt: row.computedAt.toISOString(),
@@ -128,6 +141,33 @@ function toDto(
     entryNotes,
     spreadsheetProtos,
   };
+}
+
+/**
+ * Look up the true reflex count for each pidno in a list, against the
+ * full ACD corpus (acd_reflexes). Returns a map keyed by pidno; pidnos
+ * with zero reflexes (or unknown to the corpus) are absent — callers
+ * default to 0.
+ */
+async function loadReflexCounts(
+  pidnos: number[],
+): Promise<Map<number, number>> {
+  if (pidnos.length === 0) return new Map();
+  const rows = await db
+    .select({
+      pidno: schema.acdReflexes.pidno,
+      n: sql<number>`COUNT(*)::int`.as("n"),
+    })
+    .from(schema.acdReflexes)
+    .where(inArray(schema.acdReflexes.pidno, pidnos))
+    .groupBy(schema.acdReflexes.pidno);
+  return new Map(rows.map((r) => [r.pidno, r.n]));
+}
+
+function pidnosFromRow(row: ReconstructionRow | null): number[] {
+  if (!row) return [];
+  const rankings = (row.rankings as Ranking[]) ?? [];
+  return rankings.map((r) => r.pidno).filter((n) => Number.isFinite(n));
 }
 
 async function loadEntry(entryId: number) {
@@ -212,8 +252,17 @@ export async function GET(
   const gloss = normalizeGloss(entry.glossRaw);
   const { row: recon, looseMatch } = await loadReconstructionWithFallback(text, gloss);
   const picks = await loadPicks(entryId);
+  const reflexCounts = await loadReflexCounts(pidnosFromRow(recon));
   return NextResponse.json(
-    toDto(entry, recon, picks, entry.notes, entry.spreadsheetProtos as SpreadsheetProtos | null, looseMatch),
+    toDto(
+      entry,
+      recon,
+      picks,
+      entry.notes,
+      entry.spreadsheetProtos as SpreadsheetProtos | null,
+      reflexCounts,
+      looseMatch,
+    ),
   );
 }
 
@@ -366,8 +415,16 @@ export async function POST(
 
   const saved = row ?? (await loadReconstructionStrict(text, gloss));
   const picks = await loadPicks(entryId);
+  const reflexCounts = await loadReflexCounts(pidnosFromRow(saved));
   return NextResponse.json(
-    toDto(entry, saved, picks, entry.notes, entry.spreadsheetProtos as SpreadsheetProtos | null),
+    toDto(
+      entry,
+      saved,
+      picks,
+      entry.notes,
+      entry.spreadsheetProtos as SpreadsheetProtos | null,
+      reflexCounts,
+    ),
     { status: force ? 200 : 201 },
   );
 }
