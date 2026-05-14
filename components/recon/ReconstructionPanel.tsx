@@ -24,6 +24,7 @@ import { groupBySubgroup } from "@/lib/recon/subgroups";
 import {
   fetchReconstruction,
   enqueueReconstruction,
+  cancelQueuedJob,
   clearReconstruction,
   fetchActiveJob,
   savePicks,
@@ -372,6 +373,19 @@ export function ReconstructionPanel({
             job={state.job}
             spreadsheet={state.spreadsheet}
             onBrowseAcd={onBrowseAcd}
+            onCancel={async () => {
+              try {
+                await cancelQueuedJob(state.entry.id);
+                setInternalReload((k) => k + 1);
+              } catch (err) {
+                setState({
+                  kind: "error",
+                  entry: state.entry,
+                  message: err instanceof Error ? err.message : String(err),
+                  previous: null,
+                });
+              }
+            }}
           />
         )}
         {state.kind === "error" && (
@@ -562,11 +576,13 @@ function QueuedView({
   job,
   spreadsheet,
   onBrowseAcd,
+  onCancel,
 }: {
   entry: Entry;
   job: ActiveJobDto;
   spreadsheet: SpreadsheetProtosDto | null;
   onBrowseAcd?: (prefix: string) => void;
+  onCancel: () => void;
 }) {
   const elapsedSec = job.startedAt
     ? Math.max(0, Math.floor((Date.now() - new Date(job.startedAt).getTime()) / 1000))
@@ -575,17 +591,31 @@ function QueuedView({
     <div className="px-4 py-4 space-y-4">
       {spreadsheet && <SpreadsheetReferenceCard data={spreadsheet} />}
       <div className="rounded-md border border-blue-200 bg-blue-50/60 p-4 space-y-2">
-        <div className="flex items-center gap-2">
-          <Loader2 className="h-4 w-4 animate-spin text-blue-700" />
-          <span className="text-sm font-semibold text-blue-900">
-            {job.status === "running"
-              ? `Reconstructing… (${elapsedSec}s)`
-              : "Queued"}
-          </span>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Loader2 className="h-4 w-4 animate-spin text-blue-700" />
+            <span className="text-sm font-semibold text-blue-900">
+              {job.status === "running"
+                ? `Reconstructing… (${elapsedSec}s)`
+                : "Queued"}
+            </span>
+          </div>
+          {job.status === "pending" && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onCancel}
+              className="text-xs text-blue-900/70 hover:text-destructive"
+              title="Remove this job from the queue before the worker claims it."
+            >
+              <X className="h-3 w-3" />
+              cancel
+            </Button>
+          )}
         </div>
         <p className="text-xs text-blue-900/80 leading-snug">
           {job.status === "running" ? (
-            <>The worker is calling Claude. This usually takes 1–5 minutes.</>
+            <>The worker is calling Claude. This usually takes 1–5 minutes. Can't cancel mid-run — clear the result afterward if you don't want it.</>
           ) : job.position !== null ? (
             <>
               Position <span className="font-semibold">{job.position}</span> in

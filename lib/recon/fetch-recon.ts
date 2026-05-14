@@ -194,6 +194,15 @@ export async function clearReconstruction(
   return parseResponse<{ deleted: number }>(res);
 }
 
+/** Cancel a pending (un-claimed) reconstruction job. Running jobs are
+ *  not affected — the worker will run them to completion regardless. */
+export async function cancelQueuedJob(
+  entryId: number,
+): Promise<{ cancelled: number }> {
+  const res = await fetch(`/api/recon/${entryId}/job`, { method: "DELETE" });
+  return parseResponse<{ cancelled: number }>(res);
+}
+
 /** PUT /api/recon/[entry_id]/picks — replace pick set + notes transactionally. */
 export interface PickInput {
   pidno: number;
