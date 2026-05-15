@@ -31,15 +31,35 @@ export const RANKING = z.object({
   sample_reflexes: z.array(SAMPLE_REFLEX),
 });
 
+/**
+ * Agent metadata emitted alongside the rankings array. `summary` is the
+ * user-facing top-of-panel note — the AI's overall stance on the rankings
+ * (e.g. "no PMP/PAn cognate found; candidates are semantic neighbors").
+ * The other fields are audit data: hypotheses considered, tool-call count,
+ * whether the agent escalated mid-run.
+ *
+ * All fields default to soft-optional in the zod schema so older
+ * reconstruction rows (stored before agent_meta was wired through) parse
+ * cleanly. New runs MUST emit `summary` per the prompt contract.
+ */
+export const AGENT_META = z.object({
+  summary: z.string().optional(),
+  hypotheses: z.array(z.string()).optional(),
+  tool_calls: z.number().int().optional(),
+  escalated: z.boolean().optional(),
+});
+
 export const RANKINGS_PAYLOAD = z.object({
   schema_version: z.number().int(),
   rankings: z.array(RANKING),
   model_id: z.string(),
   prompt_template_version: z.string(),
+  agent_meta: AGENT_META.optional(),
 });
 
 export const CURRENT_SCHEMA_VERSION = 1;
 
 export type SampleReflex = z.infer<typeof SAMPLE_REFLEX>;
 export type Ranking = z.infer<typeof RANKING>;
+export type AgentMeta = z.infer<typeof AGENT_META>;
 export type RankingsPayload = z.infer<typeof RANKINGS_PAYLOAD>;

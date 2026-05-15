@@ -1160,6 +1160,21 @@ function DoneView({
           </Button>
         </div>
       </div>
+      {recon.agentMeta?.summary && (
+        <div className="rounded-md border border-sky-200 bg-sky-50/60 px-3 py-2">
+          <div className="flex items-start gap-2">
+            <Sparkles className="h-3.5 w-3.5 text-sky-700 mt-0.5 flex-shrink-0" />
+            <div className="min-w-0">
+              <p className="text-[11px] uppercase tracking-wide font-semibold text-sky-900 mb-0.5">
+                AI summary
+              </p>
+              <p className="text-xs text-sky-900/90 leading-snug">
+                {recon.agentMeta.summary}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
       {manualOrphanPicks.length > 0 && (
         <section className="space-y-1.5">
           <h4 className="text-xs uppercase tracking-wide font-semibold text-muted-foreground">

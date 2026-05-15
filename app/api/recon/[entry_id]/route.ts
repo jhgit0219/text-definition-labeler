@@ -51,6 +51,17 @@ interface ReconResponseDto {
     computedAt: string;
     looseMatch: boolean;
     computedAgainstState: string | null;
+    /**
+     * Agent's metadata for this run. `summary` is rendered above the
+     * candidate list in the panel. NULL for older rows computed before
+     * the column was added.
+     */
+    agentMeta: {
+      summary?: string;
+      hypotheses?: string[];
+      tool_calls?: number;
+      escalated?: boolean;
+    } | null;
   } | null;
   picks: {
     id: number;
@@ -214,6 +225,12 @@ function toDto(
           computedAt: row.computedAt.toISOString(),
           looseMatch,
           computedAgainstState: row.computedAgainstState ?? null,
+          agentMeta: (row.agentMeta as {
+            summary?: string;
+            hypotheses?: string[];
+            tool_calls?: number;
+            escalated?: boolean;
+          } | null) ?? null,
         }
       : null,
     picks: picks.map((p) => {

@@ -109,6 +109,15 @@ export const reconstructions = pgTable(
      * before the text-gloss pair was validated.
      */
     computedAgainstState: varchar("computed_against_state", { length: 16 }),
+    /**
+     * Agent's metadata for this run: `summary` (the user-facing top-of-
+     * panel note), `hypotheses` (PMP shapes considered), `tool_calls`,
+     * `escalated`. The panel surfaces `summary` above the rankings list
+     * so annotators see the AI's overall stance at a glance. NULL for
+     * rows computed before this column was added (the panel hides the
+     * summary block in that case).
+     */
+    agentMeta: jsonb("agent_meta"),
     computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({

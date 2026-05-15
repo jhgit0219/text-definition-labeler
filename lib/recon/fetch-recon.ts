@@ -71,6 +71,18 @@ export interface ReconstructionRowDto {
    * sanity-check the text/gloss before committing picks.
    */
   computedAgainstState?: string | null;
+  /**
+   * Agent's metadata for this run. `summary` is the user-facing top-of-
+   * panel note that the agent always emits — surfaced above the candidate
+   * list so annotators see the AI's overall stance at a glance. NULL for
+   * rows computed before this field was added.
+   */
+  agentMeta?: {
+    summary?: string;
+    hypotheses?: string[];
+    tool_calls?: number;
+    escalated?: boolean;
+  } | null;
 }
 
 export interface SpreadsheetProtosDto {
