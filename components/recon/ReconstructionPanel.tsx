@@ -10,6 +10,7 @@ import {
   ChevronRight,
   Loader2,
   RefreshCw,
+  ExternalLink,
   Sparkles,
   Star,
   Trash2,
@@ -87,6 +88,9 @@ export function ReconstructionPanel({
 
   // Track which entry ID's data we hold so we don't apply stale fetches.
   const activeEntryRef = useRef<number | null>(null);
+  // Job IDs we've already auto-opened the auth tab for. Without this we'd
+  // pop a new tab every 3s on every poll.
+  const authOpenedRef = useRef<Set<number>>(new Set());
 
   useEffect(() => {
     if (!entry) {
@@ -183,6 +187,16 @@ export function ReconstructionPanel({
             previous: null,
           });
           return;
+        }
+        // If the worker is parked waiting on Gemini OAuth, auto-open the
+        // worker's /auth page in a new tab (once per job) so the
+        // researcher doesn't have to dig through error_message manually.
+        if (job.errorKind === "auth_required" && job.errorMessage) {
+          const urlMatch = job.errorMessage.match(/https?:\/\/\S+/);
+          if (urlMatch && !authOpenedRef.current.has(job.id)) {
+            authOpenedRef.current.add(job.id);
+            window.open(urlMatch[0], "_blank", "noopener,noreferrer");
+          }
         }
         // still pending / running — update job in state so position / timer refresh
         setState((prev) =>
@@ -587,9 +601,40 @@ function QueuedView({
   const elapsedSec = job.startedAt
     ? Math.max(0, Math.floor((Date.now() - new Date(job.startedAt).getTime()) / 1000))
     : 0;
+  const authRequired = job.errorKind === "auth_required";
+  const authUrl = authRequired
+    ? job.errorMessage?.match(/https?:\/\/\S+/)?.[0] ?? null
+    : null;
   return (
     <div className="px-4 py-4 space-y-4">
       {spreadsheet && <SpreadsheetReferenceCard data={spreadsheet} />}
+      {authRequired && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 text-amber-700 flex-shrink-0" />
+            <span className="text-sm font-semibold text-amber-900">
+              Gemini auth needed
+            </span>
+          </div>
+          <p className="text-xs text-amber-900/80 leading-snug">
+            The worker can&apos;t reach Gemini until someone completes the
+            OAuth flow. We&apos;ve opened a tab to the auth page — sign in
+            with the team&apos;s Gemini account there and paste the code
+            Google gives you. Your job will resume automatically.
+          </p>
+          {authUrl && (
+            <a
+              href={authUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-900 underline hover:text-amber-700"
+            >
+              <ExternalLink className="h-3 w-3" />
+              Open auth page
+            </a>
+          )}
+        </div>
+      )}
       <div className="rounded-md border border-blue-200 bg-blue-50/60 p-4 space-y-2">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
