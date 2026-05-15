@@ -9,6 +9,7 @@ import {
   loadActiveJob,
   loadJobPosition,
 } from "@/lib/recon/jobs";
+import { checkWorkerHealth } from "@/lib/recon/worker-health";
 
 // GET  -> cache row + picks + entry meta + activeJob (if any)
 // POST -> enqueue a job in recon_jobs; worker picks it up async
@@ -332,6 +333,23 @@ export async function POST(
       reusedExisting: true,
     };
     return NextResponse.json(body, { status: 202 });
+  }
+
+  // Pre-flight health check on the worker. If the worker isn't running,
+  // refuse the enqueue rather than parking a job in pending forever.
+  // Skipped when WORKER_HEALTH_URL is unset (dev convenience).
+  const health = await checkWorkerHealth();
+  if (!health.reachable) {
+    return NextResponse.json(
+      {
+        error:
+          "The reconstruction worker isn't responding. " +
+          "Ask an admin to start the worker, then retry.",
+        code: "worker_offline",
+        detail: health.reason,
+      },
+      { status: 503 },
+    );
   }
 
   const [inserted] = await db
