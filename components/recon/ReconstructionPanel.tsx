@@ -63,8 +63,23 @@ type PanelState =
   | { kind: "loading"; entry: Entry }
   | { kind: "miss"; entry: Entry; data: ReconResponseDto }
   | { kind: "queued"; entry: Entry; job: ActiveJobDto; spreadsheet: SpreadsheetProtosDto | null }
+  // Worker pre-flight health check failed with 503 worker_offline. The
+  // Render free tier spins down after 15min idle and takes 30–60s to
+  // wake; one 3.5s health probe can't see through that. We retry from
+  // the client every WARMING_INTERVAL_MS until either the worker
+  // responds or we exhaust attempts.
+  | {
+      kind: "warming";
+      entry: Entry;
+      attempt: number;
+      force: boolean;
+      previous: PanelState;
+    }
   | { kind: "done"; entry: Entry; data: ReconResponseDto }
   | { kind: "error"; entry: Entry; message: string; previous: PanelState | null };
+
+const MAX_WARMING_ATTEMPTS = 4;
+const WARMING_INTERVAL_MS = 15_000;
 
 export function ReconstructionPanel({
   entry,
@@ -212,6 +227,65 @@ export function ReconstructionPanel({
     };
   }, [state.kind === "queued" ? state.entry.id : null]);
 
+  // Warming retry loop. Re-runs whenever attempt count bumps. When the
+  // worker eventually responds, the enqueue succeeds and we flip to
+  // "queued". When attempts run out we surface an error with the
+  // previous miss/done state attached so the user can bail back.
+  useEffect(() => {
+    if (state.kind !== "warming") return;
+    const { entry: warmEntry, attempt, force, previous } = state;
+
+    if (attempt > MAX_WARMING_ATTEMPTS) {
+      setState({
+        kind: "error",
+        entry: warmEntry,
+        message:
+          "The reconstruction worker didn't wake up after ~60 seconds. " +
+          "It may be down or mid-deploy — wait a moment, then retry.",
+        previous,
+      });
+      return;
+    }
+
+    const timeout = setTimeout(async () => {
+      if (activeEntryRef.current !== warmEntry.id) return;
+      try {
+        await enqueueReconstruction(warmEntry.id, { force });
+        if (activeEntryRef.current !== warmEntry.id) return;
+        const job = await fetchActiveJob(warmEntry.id);
+        if (activeEntryRef.current !== warmEntry.id) return;
+        if (job) {
+          const spreadsheet =
+            previous.kind === "miss" || previous.kind === "done"
+              ? previous.data.spreadsheetProtos
+              : null;
+          setState({ kind: "queued", entry: warmEntry, job, spreadsheet });
+        }
+      } catch (err) {
+        if (activeEntryRef.current !== warmEntry.id) return;
+        if (isWorkerOfflineError(err)) {
+          setState((prev) =>
+            prev.kind === "warming"
+              ? { ...prev, attempt: prev.attempt + 1 }
+              : prev,
+          );
+        } else {
+          setState({
+            kind: "error",
+            entry: warmEntry,
+            message: err instanceof Error ? err.message : String(err),
+            previous,
+          });
+        }
+      }
+    }, WARMING_INTERVAL_MS);
+    return () => clearTimeout(timeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    state.kind === "warming" ? state.attempt : 0,
+    state.kind === "warming" ? state.entry.id : null,
+  ]);
+
   const dirty = useMemo(() => {
     if (!savedSnapshot) return false;
     if (draftNotes !== savedSnapshot.notes) return true;
@@ -245,13 +319,28 @@ export function ReconstructionPanel({
         setState({ kind: "queued", entry: targetEntry, job, spreadsheet });
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setState({
-        kind: "error",
-        entry: targetEntry,
-        message: msg,
-        previous: previousState,
-      });
+      if (activeEntryRef.current !== targetEntry.id) return;
+      // 503 worker_offline = pre-flight health check timed out. Most
+      // common cause is Render cold-start; the first probe always misses
+      // it because the container takes 30–60s to boot. Flip to warming
+      // so the retry effect can keep trying.
+      if (isWorkerOfflineError(err)) {
+        setState({
+          kind: "warming",
+          entry: targetEntry,
+          attempt: 1,
+          force: opts.force === true,
+          previous: previousState,
+        });
+      } else {
+        const msg = err instanceof Error ? err.message : String(err);
+        setState({
+          kind: "error",
+          entry: targetEntry,
+          message: msg,
+          previous: previousState,
+        });
+      }
     } finally {
       setRunning(false);
     }
@@ -379,6 +468,16 @@ export function ReconstructionPanel({
             onBrowseAcd={onBrowseAcd}
             draftNotes={draftNotes}
             onNotesChange={setDraftNotes}
+          />
+        )}
+        {state.kind === "warming" && (
+          <WarmingView
+            attempt={state.attempt}
+            maxAttempts={MAX_WARMING_ATTEMPTS}
+            onCancel={() => {
+              const previous = state.previous;
+              setState(previous);
+            }}
           />
         )}
         {state.kind === "queued" && (
@@ -534,6 +633,20 @@ function sortPicks(picks: PickInput[]): PickInput[] {
   return [...picks].sort((a, b) => a.pidno - b.pidno);
 }
 
+// Recognise the worker_offline 503 payload thrown by /api/recon POST.
+// Anything else (404, 500, 409, network error) is a real failure and
+// should surface as an error state — not a cold-start retry.
+function isWorkerOfflineError(err: unknown): boolean {
+  if (!(err instanceof ReconError)) return false;
+  if (err.status !== 503) return false;
+  const body = err.body;
+  return (
+    typeof body === "object" &&
+    body !== null &&
+    (body as { code?: unknown }).code === "worker_offline"
+  );
+}
+
 function EmptyState({ message }: { message: string }) {
   return (
     <div className="px-6 py-12 text-center text-sm text-muted-foreground">
@@ -580,6 +693,47 @@ function ErrorView({
           <RefreshCw className="h-3.5 w-3.5" />
           Retry
         </Button>
+      </div>
+    </div>
+  );
+}
+
+function WarmingView({
+  attempt,
+  maxAttempts,
+  onCancel,
+}: {
+  attempt: number;
+  maxAttempts: number;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="px-4 py-4">
+      <div className="rounded-md border border-amber-200 bg-amber-50/60 p-4 space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Loader2 className="h-4 w-4 animate-spin text-amber-700" />
+            <span className="text-sm font-semibold text-amber-900">
+              Waking the worker… ({attempt}/{maxAttempts})
+            </span>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onCancel}
+            className="text-xs text-amber-900/70 hover:text-destructive"
+            title="Stop retrying and go back to the entry."
+          >
+            <X className="h-3 w-3" />
+            cancel
+          </Button>
+        </div>
+        <p className="text-xs text-amber-900/80 leading-snug">
+          The worker is on Render&apos;s free tier — it spins down after
+          15 min idle and takes 30–60s to wake. We&apos;ll keep retrying
+          every 15s. Your job hasn&apos;t been enqueued yet; once the
+          worker responds, we&apos;ll add it to the queue automatically.
+        </p>
       </div>
     </div>
   );
