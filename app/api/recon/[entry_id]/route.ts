@@ -111,21 +111,15 @@ async function loadReconstructionWithFallback(
   text: string,
   gloss: string,
 ): Promise<{ row: ReconstructionRow | null; looseMatch: boolean }> {
+  // Strict (text, gloss, model, prompt) match only. An earlier version
+  // fell back to text-only lookup on miss, which silently served a
+  // different gloss's cached reconstruction when the same text appeared
+  // with multiple meanings (e.g. "Duag" = "Bella..." vs "Adular...").
+  // That's exactly the homonym case we MUST distinguish — different
+  // gloss → different reconstruction. On a cache miss, return null and
+  // let the panel offer Attempt-with-AI for a fresh run.
   const strict = await loadReconstructionStrict(text, gloss);
-  if (strict) return { row: strict, looseMatch: false };
-  const loose = await db
-    .select()
-    .from(schema.reconstructions)
-    .where(
-      and(
-        eq(schema.reconstructions.text, text),
-        eq(schema.reconstructions.modelId, CANONICAL_MODEL_ID),
-        eq(schema.reconstructions.promptVersion, CANONICAL_PROMPT_VERSION),
-      ),
-    )
-    .limit(2);
-  if (loose.length === 1) return { row: loose[0], looseMatch: true };
-  return { row: null, looseMatch: false };
+  return { row: strict, looseMatch: false };
 }
 
 async function loadPicks(entryId: number): Promise<PickRow[]> {

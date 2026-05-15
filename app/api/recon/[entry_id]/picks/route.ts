@@ -174,11 +174,12 @@ export async function PUT(
   const text = normalizeText(entry.text);
   const gloss = normalizeGloss(entry.glossRaw);
 
-  // Strict lookup first; if no exact (text, gloss) row exists, fall back to
-  // a text-only lookup under the canonical model+prompt. Same logic as the
-  // GET path — annotators must be able to save picks against rows that
-  // were originally computed with a slightly different gloss spelling.
-  let [recon] = await db
+  // Strict (text, gloss) match only. An earlier version fell back to
+  // text-only lookup on miss, which is wrong for homonyms — two
+  // entries can share the same Bisaya text but mean entirely different
+  // things (e.g. "Duag" = "Bella..." vs "Adular...") and must have
+  // their own reconstructions with their own pidnos.
+  const [recon] = await db
     .select()
     .from(schema.reconstructions)
     .where(
@@ -189,22 +190,6 @@ export async function PUT(
         eq(schema.reconstructions.promptVersion, CANONICAL_PROMPT_VERSION),
       ),
     );
-  if (!recon) {
-    const loose = await db
-      .select()
-      .from(schema.reconstructions)
-      .where(
-        and(
-          eq(schema.reconstructions.text, text),
-          eq(schema.reconstructions.modelId, CANONICAL_MODEL_ID),
-          eq(schema.reconstructions.promptVersion, CANONICAL_PROMPT_VERSION),
-        ),
-      )
-      .limit(2);
-    if (loose.length === 1) {
-      recon = loose[0];
-    }
-  }
   // Manual-only pick sets are allowed without a reconstruction (the
   // annotator may pick from /dictionary before any AI run, or after
   // clearing the AI rankings via the panel's clear button). AI picks
