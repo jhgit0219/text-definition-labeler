@@ -814,7 +814,7 @@ function QueuedView({
         </div>
         <p className="text-xs text-blue-900/80 leading-snug">
           {job.status === "running" ? (
-            <>The worker is calling Claude. This usually takes 1–5 minutes. Can't cancel mid-run — clear the result afterward if you don't want it.</>
+            <>The worker is calling the AI service. This usually takes 1–5 minutes. Can't cancel mid-run — clear the result afterward if you don't want it.</>
           ) : job.position !== null ? (
             <>
               Position <span className="font-semibold">{job.position}</span> in
