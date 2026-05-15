@@ -29,3 +29,15 @@ public/pages/*.png
 # typescript / next
 next-env.d.ts
 *.tsbuildinfo
+
+# Claude Code local state (per-project trust dialog, etc.) — machine-specific
+.claude/
+
+# Local working notes that reference other repos — keep out of the public
+# repo. Contains scrubbed Pega-related architecture notes plus an unscrubbed
+# zip backup that must never be pushed.
+doc/
+doc.bak-scrub/
+
+# Stray archives that shouldn't be in the repo
+pay.zip
